@@ -21,8 +21,8 @@
 
 - Trading pair for strategy: ETHUSDT only.
 - Position ownership model:
-  - Allow up to 2 concurrent ETHUSDT LONG positions total
-  - 1 strategy-owned + 1 manual-owned
+  - Strategy: ETHUSDT LONG ownership remains single strategy position
+  - Manual: allow up to 3 manual-owned LONG positions from approved symbol whitelist
 - Default execution safety:
   - Use `DRY_RUN=true` until explicitly switched off.
   - Never remove core risk guards without user request.
@@ -30,6 +30,9 @@
 - All major changes should be reflected in:
   - `app/templates/chatlog.html`
   - `PROJECT_LOG.md`
+- Auto-maintenance rule:
+  - After every coding task, update both `PROJECT_LOG.md` and `app/templates/chatlog.html` automatically.
+  - Do not wait for user reminder to update logs/history.
 
 ## Current System Capabilities
 
@@ -66,7 +69,7 @@
 2. Read `app/templates/chatlog.html` for user intent and conversation history.
 3. Run service and smoke check:
    - `docker compose up --build -d`
-   - Open `/`, `/manual`, `/eth-chart`, `/chatlog`
+   - Open `/`, `/manual`, `/aster-chart`, `/chatlog`
 4. Validate current mode:
    - Check `DRY_RUN` in `.env`
    - Check `/api/status` for `strategy_state`
@@ -80,3 +83,4 @@
   - UI changes
   - Log/monitoring impact
   - Update to `PROJECT_LOG.md`
+- Keep Boktoshi code grouped under `BoktoshiBotModule/`; ASTER futures module stays under `AsterTradingModule/`.

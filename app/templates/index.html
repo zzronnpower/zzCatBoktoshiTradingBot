@@ -14,7 +14,8 @@
         <div class="nav-links">
           <a href="/" class="active">Dashboard</a>
           <a href="/manual">Manual Trade</a>
-          <a href="/eth-chart">ETH Chart</a>
+          <a href="/aster-chart">ASTER Chart</a>
+          <a href="/aster-trading">AsterTrading</a>
           <a href="/chatlog">ChatLog</a>
         </div>
         <div class="live-bar" id="live-bar">
@@ -44,7 +45,7 @@
 
       <section class="grid">
         <div class="card">
-          <h2>Open Positions (ETH)</h2>
+          <h2>Open Positions</h2>
           <h3 class="muted">Strategy Position</h3>
           <div id="positions-strategy">Loading...</div>
           <h3 class="muted" style="margin-top: 12px;">Manual Position</h3>
@@ -88,6 +89,37 @@
         const d = new Date(Number(ms));
         return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
       };
+
+      function resolveLeverage(position, fallbackLeverage = 0) {
+        const lev = Number(position?.leverage ?? fallbackLeverage ?? 0);
+        return Number.isFinite(lev) && lev > 0 ? lev : 0;
+      }
+
+      function resolveMargin(position, fallbackLeverage = 0) {
+        const directMargin = Number(
+          position?.margin ?? position?.usedMargin ?? position?.initialMargin ?? position?.isolatedMargin ?? 0,
+        );
+        if (Number.isFinite(directMargin) && directMargin > 0) return directMargin;
+
+        const lev = resolveLeverage(position, fallbackLeverage);
+        const directSize = Number(position?.size ?? position?.positionSize ?? position?.notional ?? 0);
+        if (Number.isFinite(directSize) && directSize > 0 && lev > 0) return directSize / lev;
+
+        const qty = Math.abs(Number(position?.positionAmt ?? position?.amount ?? position?.qty ?? 0));
+        const px = Number(position?.entryPrice ?? position?.currentPrice ?? 0);
+        if (qty > 0 && px > 0 && lev > 0) return (qty * px) / lev;
+
+        return 0;
+      }
+
+      function resolveSize(position, fallbackLeverage = 0) {
+        const directSize = Number(position?.size ?? position?.positionSize ?? position?.notional ?? 0);
+        if (Number.isFinite(directSize) && directSize > 0) return directSize;
+        const lev = resolveLeverage(position, fallbackLeverage);
+        const margin = resolveMargin(position, fallbackLeverage);
+        if (margin > 0 && lev > 0) return margin * lev;
+        return 0;
+      }
 
       function renderKV(el, rows) {
         el.innerHTML = rows
@@ -168,7 +200,9 @@
           const boks = accountData.boks || {};
           const openItems = positions.items || [];
           const strategyPosition = positions.strategy_position;
-          const manualPosition = positions.manual_position;
+          const manualPositions = Array.isArray(positions.manual_positions) && positions.manual_positions.length
+            ? positions.manual_positions
+            : (positions.manual_position ? [positions.manual_position] : []);
           const unrealized = openItems.reduce((sum, p) => sum + Number(p.unrealizedPnl || 0), 0);
 
           document.getElementById('stat-balance').textContent = `${money(boks.balance)} BOKS`;
@@ -190,7 +224,7 @@
 
           renderKV(document.getElementById('account'), [
             { key: 'Bot name', value: accountData.botName || '-' },
-            { key: 'Bot status', value: accountData.status || '-' },
+            { key: 'Bot status', value: status.strategy_state === 'paused' ? 'paused' : 'running' },
             { key: 'Balance', value: `${money(boks.balance)} BOKS` },
             { key: 'Locked margin', value: `${money(boks.lockedMargin)} BOKS` },
             { key: 'Available', value: `${money(boks.availableBalance)} BOKS` },
@@ -200,7 +234,7 @@
 
         renderTable(
           document.getElementById('positions-strategy'),
-          ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'uPnL', 'Opened'],
+          ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'Margin', 'Size', 'uPnL', 'Opened'],
           strategyPosition
             ? [[
                 strategyPosition.coin || '-',
@@ -209,6 +243,14 @@
                 money(strategyPosition.currentPrice),
                 strategyPosition.stopLoss ? money(strategyPosition.stopLoss) : '-',
                 strategyPosition.takeProfit ? money(strategyPosition.takeProfit) : '-',
+                (() => {
+                  const margin = resolveMargin(strategyPosition, status?.strategy?.leverage || 0);
+                  return margin > 0 ? `${money(margin)} BOKS` : '-';
+                })(),
+                (() => {
+                  const size = resolveSize(strategyPosition, status?.strategy?.leverage || 0);
+                  return size > 0 ? `${money(size)} BOKS` : '-';
+                })(),
                 `${Number(strategyPosition.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(strategyPosition.unrealizedPnl)} BOKS`,
                 tsMs(strategyPosition.openedAt),
               ]]
@@ -217,19 +259,25 @@
 
         renderTable(
           document.getElementById('positions-manual'),
-          ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'uPnL', 'Opened'],
-          manualPosition
-            ? [[
-                manualPosition.coin || '-',
-                manualPosition.side || '-',
-                money(manualPosition.entryPrice),
-                money(manualPosition.currentPrice),
-                manualPosition.stopLoss ? money(manualPosition.stopLoss) : '-',
-                manualPosition.takeProfit ? money(manualPosition.takeProfit) : '-',
-                `${Number(manualPosition.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(manualPosition.unrealizedPnl)} BOKS`,
-                tsMs(manualPosition.openedAt),
-              ]]
-            : [],
+          ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'Margin', 'Size', 'uPnL', 'Opened'],
+          manualPositions.map((manualPosition) => [
+            manualPosition.coin || '-',
+            manualPosition.side || '-',
+            money(manualPosition.entryPrice),
+            money(manualPosition.currentPrice),
+            manualPosition.stopLoss ? money(manualPosition.stopLoss) : '-',
+            manualPosition.takeProfit ? money(manualPosition.takeProfit) : '-',
+            (() => {
+              const margin = resolveMargin(manualPosition, status?.strategy?.leverage || 0);
+              return margin > 0 ? `${money(margin)} BOKS` : '-';
+            })(),
+            (() => {
+              const size = resolveSize(manualPosition, status?.strategy?.leverage || 0);
+              return size > 0 ? `${money(size)} BOKS` : '-';
+            })(),
+            `${Number(manualPosition.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(manualPosition.unrealizedPnl)} BOKS`,
+            tsMs(manualPosition.openedAt),
+          ]),
         );
 
           renderTable(

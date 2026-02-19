@@ -22,11 +22,15 @@ Trading bot for Boktoshi MechaTradeClub using Hyperliquid OHLC data.
 - PnL history (equity curve)
 - Signal diagnostics
 - Logs
-- ETH Chart tab (ASTER-only market data)
+- ASTER Chart tab (ASTER-only market data)
+- AsterTrading tab (ASTER futures manual trading)
 
 ## Quick Start (Docker)
 
-1) Ensure `.env` exists (already created)
+1) Configure module env files:
+
+- `BoktoshiBotModule/.env`
+- `AsterTradingModule/.env`
 
 2) Run:
 
@@ -35,6 +39,7 @@ docker compose up --build
 ```
 
 Open: http://localhost:8000
+ASTER Chart: http://localhost:8000/aster-chart
 
 ## Local Run
 
@@ -57,9 +62,19 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - `/api/aster/overview`
 - `/api/aster/klines`
 - `/api/aster/depth`
+- `/api/aster/symbols`
+- `/api/aster-trading/account-overview`
+- `/api/aster-trading/order-preview`
+- `/api/aster-trading/place-order`
+- `/api/aster-trading/close-position`
+- `/api/aster-trading/open-positions`
+- `/api/aster-trading/open-orders`
+- `/api/aster-trading/trade-history`
+- `/api/aster-trading/pnl-history`
 
 ## Safety Notes
 
 - Start with `DRY_RUN=true` to validate behavior.
 - Set `DRY_RUN=false` only after reviewing logs/signals.
-- Keep API key in `.env` and never commit it.
+- Keep API keys only in `BoktoshiBotModule/.env` and `AsterTradingModule/.env`, never commit them.
+- For ASTER manual trading, keep `ASTER_DRY_RUN=true` first and only switch to `false` when preview checks are stable.

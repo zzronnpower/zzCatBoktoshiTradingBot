@@ -2,7 +2,7 @@ import json
 import os
 from typing import Any, Dict
 
-from fastapi import FastAPI, HTTPException
+from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
 from fastapi.staticfiles import StaticFiles
 from fastapi.templating import Jinja2Templates
@@ -10,6 +10,7 @@ from starlette.requests import Request
 
 from .aster_client import AsterClient
 from .bot_runner import BotRunner
+from AsterTradingModule import AsterManualTradingService, AsterTradingConfig
 from .storage import (
     get_all_kv,
     get_equity_curve,
@@ -18,6 +19,27 @@ from .storage import (
     get_trades,
     init_db,
 )
+
+
+def _load_env_file_if_exists(path: str) -> None:
+    if not os.path.exists(path):
+        return
+    try:
+        with open(path, "r", encoding="utf-8") as f:
+            for raw_line in f:
+                line = raw_line.strip()
+                if not line or line.startswith("#") or "=" not in line:
+                    continue
+                key, value = line.split("=", 1)
+                key = key.strip()
+                value = value.strip()
+                if not key:
+                    continue
+                if value and ((value[0] == '"' and value[-1] == '"') or (value[0] == "'" and value[-1] == "'")):
+                    value = value[1:-1]
+                os.environ.setdefault(key, value)
+    except Exception:
+        return
 
 
 def _env_bool(value: str, default: bool) -> bool:
@@ -33,6 +55,10 @@ def _parse_json(value: str) -> Any:
         return json.loads(value)
     except Exception:
         return value
+
+
+_load_env_file_if_exists("BoktoshiBotModule/.env")
+_load_env_file_if_exists("AsterTradingModule/.env")
 
 
 DB_PATH = os.getenv("DB_PATH", "/app/data/bot.db")
@@ -55,6 +81,7 @@ app = FastAPI(title="zzCatBoktoshiTradingBot")
 templates = Jinja2Templates(directory="app/templates")
 app.mount("/static", StaticFiles(directory="app/static"), name="static")
 aster = AsterClient(base_url=ASTER_BASE_URL)
+aster_trading = AsterManualTradingService(AsterTradingConfig())
 
 runner = BotRunner(
     db_path=DB_PATH,
@@ -77,6 +104,7 @@ runner = BotRunner(
 def on_startup() -> None:
     os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
     init_db(DB_PATH)
+    runner.load_runtime_settings_from_db()
     runner.start()
 
 
@@ -100,14 +128,25 @@ def chatlog_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("chatlog.html", {"request": request})
 
 
+@app.get("/aster-trading", response_class=HTMLResponse)
+def aster_trading_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("aster_trading.html", {"request": request})
+
+
 @app.get("/eth-chart", response_class=HTMLResponse)
 def eth_chart_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("eth_chart.html", {"request": request})
+
+
+@app.get("/aster-chart", response_class=HTMLResponse)
+def aster_chart_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("eth_chart.html", {"request": request})
 
 
 @app.get("/api/status")
 def status() -> Dict[str, Any]:
     kv = get_all_kv(DB_PATH)
+    runtime_settings = runner.get_runtime_settings()
     return {
         "bot_status": kv.get("bot_status", "unknown"),
         "strategy_state": "paused" if runner.is_strategy_paused() else "running",
@@ -120,10 +159,10 @@ def status() -> Dict[str, Any]:
             "name": "MA50_4H_CROSSUP_3C_LONG_ONLY",
             "entry": "Price cross above MA50 and closes above MA50 for 3 consecutive 4H candles",
             "short_enabled": False,
-            "margin_boks": MARGIN_BOKS,
-            "leverage": LEVERAGE,
-            "sl_capital_pct": SL_CAPITAL_PCT,
-            "tp_capital_pct": TP_CAPITAL_PCT,
+            "margin_boks": runtime_settings["margin_boks"],
+            "leverage": runtime_settings["leverage"],
+            "sl_capital_pct": runtime_settings["sl_capital_pct"],
+            "tp_capital_pct": runtime_settings["tp_capital_pct"],
         },
         "last_signal": _parse_json(kv.get("last_signal", "")),
     }
@@ -150,6 +189,7 @@ def open_positions() -> Dict[str, Any]:
         "items": items,
         "strategy_position": grouped.get("strategy_position"),
         "manual_position": grouped.get("manual_position"),
+        "manual_positions": grouped.get("manual_positions", []),
         "unknown_positions": grouped.get("unknown_positions", []),
     }
 
@@ -182,14 +222,65 @@ def logs() -> Dict[str, Any]:
     return {"items": get_logs(DB_PATH, limit=300)}
 
 
+@app.get("/api/bot/settings")
+def bot_settings() -> Dict[str, Any]:
+    values = runner.get_runtime_settings()
+    return {
+        "margin_boks": values["margin_boks"],
+        "leverage": values["leverage"],
+        "sl_capital_pct": values["sl_capital_pct"],
+        "tp_capital_pct": values["tp_capital_pct"],
+        "sl_percent": values["sl_capital_pct"] * 100,
+        "tp_percent": values["tp_capital_pct"] * 100,
+    }
+
+
+@app.post("/api/bot/settings")
+def update_bot_settings(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:  # type: ignore[valid-type]
+    parsed = {
+        "margin_boks": payload.get("margin_boks"),
+        "leverage": payload.get("leverage"),
+        "sl_capital_pct": payload.get("sl_capital_pct"),
+        "tp_capital_pct": payload.get("tp_capital_pct"),
+    }
+
+    sl_percent = payload.get("sl_percent")
+    tp_percent = payload.get("tp_percent")
+    if sl_percent is not None:
+        try:
+            parsed["sl_capital_pct"] = float(sl_percent) / 100
+        except Exception:
+            pass
+    if tp_percent is not None:
+        try:
+            parsed["tp_capital_pct"] = float(tp_percent) / 100
+        except Exception:
+            pass
+
+    updated = runner.apply_runtime_settings(parsed)
+    return {
+        "success": True,
+        "settings": {
+            "margin_boks": updated["margin_boks"],
+            "leverage": updated["leverage"],
+            "sl_capital_pct": updated["sl_capital_pct"],
+            "tp_capital_pct": updated["tp_capital_pct"],
+            "sl_percent": updated["sl_capital_pct"] * 100,
+            "tp_percent": updated["tp_capital_pct"] * 100,
+        },
+    }
+
+
 @app.post("/api/manual/force-open-long")
-def manual_force_open_long() -> Dict[str, Any]:
-    return runner.manual_force_open_long(comment="Manual force open LONG ETHUSDT from dashboard")
+def manual_force_open_long(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:  # type: ignore[valid-type]
+    symbol = str(payload.get("symbol", "ETHUSDT") or "ETHUSDT").upper()
+    return runner.manual_force_open_long(symbol=symbol, comment="Manual open LONG position from dashboard")
 
 
 @app.post("/api/manual/close-position")
-def manual_close_position() -> Dict[str, Any]:
-    return runner.manual_close_eth_positions(comment="Manual close LONG ETHUSDT from dashboard")
+def manual_close_position(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:  # type: ignore[valid-type]
+    position_id = str(payload.get("position_id", "") or "")
+    return runner.manual_close_eth_positions(position_id=position_id, comment="Manual close LONG position from dashboard")
 
 
 @app.post("/api/manual/close-strategy-position")
@@ -231,5 +322,80 @@ def aster_klines(symbol: str = "ETHUSDT", interval: str = "5m", limit: int = 400
 def aster_depth(symbol: str = "ETHUSDT", limit: int = 20) -> Dict[str, Any]:
     try:
         return aster.get_depth(symbol=symbol, limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/aster/symbols")
+def aster_symbols() -> Dict[str, Any]:
+    try:
+        items = aster.get_usdt_symbols_ranked(
+            pinned_symbols=["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "HYPEUSDT", "PUMPUSDT", "DOGEUSDT"]
+        )
+        return {"items": items, "count": len(items)}
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/aster-trading/account-overview")
+def aster_trading_account_overview() -> Dict[str, Any]:
+    try:
+        return aster_trading.get_account_overview()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.post("/api/aster-trading/order-preview")
+def aster_trading_order_preview(payload: Dict[str, Any] = Body(default={})):  # type: ignore[valid-type]
+    try:
+        return aster_trading.preview_order(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/aster-trading/place-order")
+def aster_trading_place_order(payload: Dict[str, Any] = Body(default={})):  # type: ignore[valid-type]
+    try:
+        return aster_trading.place_manual_order(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.post("/api/aster-trading/close-position")
+def aster_trading_close_position(payload: Dict[str, Any] = Body(default={})):  # type: ignore[valid-type]
+    try:
+        return aster_trading.close_position_market(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/aster-trading/open-positions")
+def aster_trading_open_positions() -> Dict[str, Any]:
+    try:
+        return aster_trading.get_open_positions()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/aster-trading/open-orders")
+def aster_trading_open_orders() -> Dict[str, Any]:
+    try:
+        return aster_trading.get_open_orders()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/aster-trading/trade-history")
+def aster_trading_trade_history(limit: int = 100) -> Dict[str, Any]:
+    try:
+        return aster_trading.get_trade_history(limit=limit)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/aster-trading/pnl-history")
+def aster_trading_pnl_history(limit: int = 100) -> Dict[str, Any]:
+    try:
+        return aster_trading.get_income_history(limit=limit)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

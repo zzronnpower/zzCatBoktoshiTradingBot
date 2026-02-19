@@ -10,11 +10,12 @@
     <div class="page">
       <header class="header">
         <h1>Manual Trade Console</h1>
-        <p>Force open LONG ETHUSDT or close open ETHUSDT positions.</p>
+        <p>Open and close manual LONG positions while strategy remains ETHUSDT-only.</p>
         <div class="nav-links">
           <a href="/">Dashboard</a>
           <a href="/manual" class="active">Manual Trade</a>
-          <a href="/eth-chart">ETH Chart</a>
+          <a href="/aster-chart">ASTER Chart</a>
+          <a href="/aster-trading">AsterTrading</a>
           <a href="/chatlog">ChatLog</a>
         </div>
       </header>
@@ -31,15 +32,48 @@
         </div>
 
         <div class="card">
-          <h2>Force Open</h2>
-          <p class="muted">Open LONG ETHUSDT immediately with configured risk settings (100 BOKS, x5, SL/TP by capital).</p>
-          <button id="btn-open" class="btn btn-primary">Force Open LONG ETHUSDT</button>
+          <h2>Bot Settings</h2>
+          <p class="muted">Edit shared settings used by Strategy and Manual open trade flow.</p>
+          <div class="kv-list" style="margin-top:10px;">
+            <div class="kv-row"><span>Margin (BOKS)</span><input id="cfg-size" type="number" min="1" step="1" style="max-width:140px;" /></div>
+            <div class="kv-row"><span>Leverage (x)</span><input id="cfg-lev" type="number" min="1" step="0.1" style="max-width:140px;" /></div>
+            <div class="kv-row"><span>Stoploss (%)</span><input id="cfg-sl" type="number" min="0.01" step="0.01" style="max-width:140px;" /></div>
+            <div class="kv-row"><span>Take Profit (%)</span><input id="cfg-tp" type="number" min="0" step="0.01" style="max-width:140px;" /></div>
+          </div>
+          <button id="btn-save-settings" class="btn btn-primary" style="margin-top:10px;">Save Settings</button>
+        </div>
+
+        <div class="card">
+          <h2>Manual Trade Panel</h2>
+          <p class="muted">Pick a symbol, then open manual LONG with current Bot Settings profile.</p>
+          <div class="kv-list" style="margin-top:10px;">
+            <div class="kv-row">
+              <span>Open LONG Symbol</span>
+              <select id="manual-open-symbol" style="max-width:210px;">
+                <option value="BTCUSDT">BTCUSDT</option>
+                <option value="ETHUSDT">ETHUSDT</option>
+                <option value="SOLUSDT">SOLUSDT</option>
+                <option value="XRPUSDT">XRPUSDT</option>
+                <option value="HYPEUSDT">HYPEUSDT</option>
+                <option value="PUMPUSDT">PUMPUSDT</option>
+                <option value="DOGEUSDT">DOGEUSDT</option>
+              </select>
+            </div>
+            <div class="kv-row"><span>Config Preview</span><strong id="manual-config-preview">Loading...</strong></div>
+          </div>
+          <button id="btn-open" class="btn btn-primary" style="margin-top:10px;">OPEN Manual LONG Position</button>
         </div>
 
         <div class="card">
           <h2>Close Position</h2>
-          <p class="muted">Close only the manual-owned LONG ETHUSDT position.</p>
-          <button id="btn-close" class="btn btn-danger">Close Manual ETH Position</button>
+          <p class="muted">Select a manual-owned position and close only that one.</p>
+          <div class="kv-list" style="margin-top:10px;">
+            <div class="kv-row">
+              <span>Manual Position</span>
+              <select id="manual-close-position" style="max-width:270px;"></select>
+            </div>
+          </div>
+          <button id="btn-close" class="btn btn-danger" style="margin-top:10px;">Manual Close Position</button>
           <button id="btn-close-strategy" class="btn btn-warning" style="margin-top: 10px;">Close Strategy Position</button>
         </div>
       </section>
@@ -67,6 +101,37 @@
         return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
       };
 
+      function resolveLeverage(position, fallbackLeverage = 0) {
+        const lev = Number(position?.leverage ?? fallbackLeverage ?? 0);
+        return Number.isFinite(lev) && lev > 0 ? lev : 0;
+      }
+
+      function resolveMargin(position, fallbackLeverage = 0) {
+        const directMargin = Number(
+          position?.margin ?? position?.usedMargin ?? position?.initialMargin ?? position?.isolatedMargin ?? 0,
+        );
+        if (Number.isFinite(directMargin) && directMargin > 0) return directMargin;
+
+        const lev = resolveLeverage(position, fallbackLeverage);
+        const directSize = Number(position?.size ?? position?.positionSize ?? position?.notional ?? 0);
+        if (Number.isFinite(directSize) && directSize > 0 && lev > 0) return directSize / lev;
+
+        const qty = Math.abs(Number(position?.positionAmt ?? position?.amount ?? position?.qty ?? 0));
+        const px = Number(position?.entryPrice ?? position?.currentPrice ?? 0);
+        if (qty > 0 && px > 0 && lev > 0) return (qty * px) / lev;
+
+        return 0;
+      }
+
+      function resolveSize(position, fallbackLeverage = 0) {
+        const directSize = Number(position?.size ?? position?.positionSize ?? position?.notional ?? 0);
+        if (Number.isFinite(directSize) && directSize > 0) return directSize;
+        const lev = resolveLeverage(position, fallbackLeverage);
+        const margin = resolveMargin(position, fallbackLeverage);
+        if (margin > 0 && lev > 0) return margin * lev;
+        return 0;
+      }
+
       async function fetchJson(path, options = {}) {
         const res = await fetch(path, options);
         return res.json();
@@ -74,7 +139,7 @@
 
       function renderTable(el, columns, rows) {
         if (!rows || !rows.length) {
-          el.innerHTML = '<p class="muted">No open ETHUSDT positions.</p>';
+          el.innerHTML = '<p class="muted">No open positions.</p>';
           return;
         }
         const head = columns.map((c) => `<th>${c}</th>`).join('');
@@ -101,19 +166,29 @@
       async function refreshPositions() {
         const [data, status] = await Promise.all([fetchJson('/api/open-positions'), fetchJson('/api/status')]);
         const strategy = data.strategy_position || null;
-        const manual = data.manual_position || null;
+        const manualPositions = Array.isArray(data.manual_positions) && data.manual_positions.length
+          ? data.manual_positions
+          : (data.manual_position ? [data.manual_position] : []);
         document.getElementById('strategy-state').textContent = `Strategy state: ${status.strategy_state || 'running'}`;
         renderTable(
           document.getElementById('positions-strategy'),
-          ['Position ID', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'uPnL', 'Opened'],
+          ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'Margin', 'Size', 'uPnL', 'Opened'],
           strategy
             ? [[
-                strategy.positionId || '-',
+                strategy.coin || '-',
                 strategy.side || '-',
                 money(strategy.entryPrice),
                 money(strategy.currentPrice),
                 strategy.stopLoss ? money(strategy.stopLoss) : '-',
                 strategy.takeProfit ? money(strategy.takeProfit) : '-',
+                (() => {
+                  const margin = resolveMargin(strategy, status?.strategy?.leverage || 0);
+                  return margin > 0 ? `${money(margin)} BOKS` : '-';
+                })(),
+                (() => {
+                  const size = resolveSize(strategy, status?.strategy?.leverage || 0);
+                  return size > 0 ? `${money(size)} BOKS` : '-';
+                })(),
                 `${Number(strategy.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(strategy.unrealizedPnl)} BOKS`,
                 tsMs(strategy.openedAt),
               ]]
@@ -121,20 +196,80 @@
         );
         renderTable(
           document.getElementById('positions-manual'),
-          ['Position ID', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'uPnL', 'Opened'],
-          manual
-            ? [[
-                manual.positionId || '-',
-                manual.side || '-',
-                money(manual.entryPrice),
-                money(manual.currentPrice),
-                manual.stopLoss ? money(manual.stopLoss) : '-',
-                manual.takeProfit ? money(manual.takeProfit) : '-',
-                `${Number(manual.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(manual.unrealizedPnl)} BOKS`,
-                tsMs(manual.openedAt),
-              ]]
-            : [],
+          ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'Margin', 'Size', 'uPnL', 'Opened'],
+          manualPositions.map((manual) => [
+            manual.coin || '-',
+            manual.side || '-',
+            money(manual.entryPrice),
+            money(manual.currentPrice),
+            manual.stopLoss ? money(manual.stopLoss) : '-',
+            manual.takeProfit ? money(manual.takeProfit) : '-',
+            (() => {
+              const margin = resolveMargin(manual, status?.strategy?.leverage || 0);
+              return margin > 0 ? `${money(margin)} BOKS` : '-';
+            })(),
+            (() => {
+              const size = resolveSize(manual, status?.strategy?.leverage || 0);
+              return size > 0 ? `${money(size)} BOKS` : '-';
+            })(),
+            `${Number(manual.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(manual.unrealizedPnl)} BOKS`,
+            tsMs(manual.openedAt),
+          ]),
         );
+
+        const selector = document.getElementById('manual-close-position');
+        selector.innerHTML = '';
+        if (!manualPositions.length) {
+          selector.innerHTML = '<option value="">No manual positions</option>';
+        } else {
+          selector.innerHTML = manualPositions
+            .map((p) => {
+              const pid = p.positionId || '';
+              const coin = p.coin || '-';
+              const entry = money(p.entryPrice);
+              const margin = (() => {
+                const v = resolveMargin(p, status?.strategy?.leverage || 0);
+                return v > 0 ? money(v) : '-';
+              })();
+              return `<option value="${pid}">${pid} | ${coin} | entry ${entry} | margin ${margin}</option>`;
+            })
+            .join('');
+        }
+      }
+
+      async function refreshSettings() {
+        const cfg = await fetchJson('/api/bot/settings');
+        document.getElementById('cfg-size').value = Number(cfg.margin_boks || 0).toFixed(2).replace(/\.00$/, '');
+        document.getElementById('cfg-lev').value = Number(cfg.leverage || 0).toFixed(2).replace(/\.00$/, '');
+        document.getElementById('cfg-sl').value = Number(cfg.sl_percent || 0).toFixed(2).replace(/\.00$/, '');
+        document.getElementById('cfg-tp').value = Number(cfg.tp_percent || 0).toFixed(2).replace(/\.00$/, '');
+        document.getElementById('manual-config-preview').textContent = `Margin ${Number(cfg.margin_boks || 0).toFixed(2)} BOKS | Leverage x${Number(cfg.leverage || 0).toFixed(2)} | SL ${Number(cfg.sl_percent || 0).toFixed(2)}% | TP ${Number(cfg.tp_percent || 0).toFixed(2)}%`;
+      }
+
+      async function saveSettings() {
+        const btn = document.getElementById('btn-save-settings');
+        btn.disabled = true;
+        btn.textContent = 'Saving...';
+        try {
+          const payload = {
+            margin_boks: Number(document.getElementById('cfg-size').value || 0),
+            leverage: Number(document.getElementById('cfg-lev').value || 0),
+            sl_percent: Number(document.getElementById('cfg-sl').value || 0),
+            tp_percent: Number(document.getElementById('cfg-tp').value || 0),
+          };
+          const data = await fetchJson('/api/bot/settings', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          renderResult({ success: true, message: 'Settings saved.', details: JSON.stringify(data.settings || {}) }, false);
+          await refreshSettings();
+        } catch (e) {
+          renderResult({ success: false, message: String(e) }, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Save Settings';
+        }
       }
 
       async function forceOpen() {
@@ -142,31 +277,45 @@
         btn.disabled = true;
         btn.textContent = 'Opening...';
         try {
-          const data = await fetchJson('/api/manual/force-open-long', { method: 'POST' });
+          const symbol = document.getElementById('manual-open-symbol').value || 'ETHUSDT';
+          const data = await fetchJson('/api/manual/force-open-long', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ symbol }),
+          });
           renderResult(data, !data.success);
           await refreshPositions();
         } catch (e) {
           renderResult({ success: false, message: String(e) }, true);
         } finally {
           btn.disabled = false;
-          btn.textContent = 'Force Open LONG ETHUSDT';
+          btn.textContent = 'OPEN Manual LONG Position';
         }
       }
 
       async function closePosition() {
-        if (!confirm('Close manual ETHUSDT position?')) return;
+        const positionId = document.getElementById('manual-close-position').value || '';
+        if (!positionId) {
+          renderResult({ success: false, message: 'Please select manual position first.' }, true);
+          return;
+        }
+        if (!confirm(`Close manual position ${positionId}?`)) return;
         const btn = document.getElementById('btn-close');
         btn.disabled = true;
         btn.textContent = 'Closing...';
         try {
-          const data = await fetchJson('/api/manual/close-position', { method: 'POST' });
+          const data = await fetchJson('/api/manual/close-position', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ position_id: positionId }),
+          });
           renderResult(data, !data.success);
           await refreshPositions();
         } catch (e) {
           renderResult({ success: false, message: String(e) }, true);
         } finally {
           btn.disabled = false;
-          btn.textContent = 'Close Manual ETH Position';
+          btn.textContent = 'Manual Close Position';
         }
       }
 
@@ -224,9 +373,12 @@
       document.getElementById('btn-close-strategy').addEventListener('click', closeStrategyPosition);
       document.getElementById('btn-pause').addEventListener('click', pauseStrategy);
       document.getElementById('btn-resume').addEventListener('click', resumeStrategy);
+      document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
 
       refreshPositions();
+      refreshSettings();
       setInterval(refreshPositions, 5000);
+      setInterval(refreshSettings, 15000);
     </script>
   </body>
 </html>

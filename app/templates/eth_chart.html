@@ -3,7 +3,7 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>ETH Chart - zzCatBoktoshiTradingBot</title>
+    <title>ASTER Chart - zzCatBoktoshiTradingBot</title>
     <link rel="stylesheet" href="/static/app.css" />
     <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
     <style>
@@ -12,8 +12,27 @@
       .tk { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: linear-gradient(180deg,#162742,#101d33); }
       .tk .k { display:block; color: var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px; margin-bottom:6px; }
       .tk .v { font-size:18px; font-weight:700; }
+      #tk-oi { white-space: nowrap; }
       .chart-card { min-height: 620px; }
-      .chart-toolbar { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; }
+      .chart-toolbar { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; flex-wrap: wrap; }
+      .symbol-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
+      .symbol-group input, .symbol-group select {
+        border: 1px solid var(--line);
+        background: rgba(255,255,255,.04);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      .symbol-group select {
+        color-scheme: dark;
+        background: linear-gradient(180deg, #1b2944 0%, #16243d 100%);
+      }
+      .symbol-group select option {
+        background: #101b2f;
+        color: #e8f0fb;
+      }
+      .symbol-group input { width: 170px; }
+      .symbol-group select { width: 170px; }
       .tf-group { display:flex; gap:6px; flex-wrap:wrap; }
       .tf-btn { border:1px solid var(--line); background:rgba(255,255,255,.04); color:var(--text); padding:6px 10px; border-radius:8px; cursor:pointer; }
       .tf-btn.active { border-color: var(--accent); color: var(--accent); }
@@ -40,18 +59,19 @@
   <body>
     <div class="page">
       <header class="header">
-        <h1>ETH Chart (ASTER)</h1>
-        <p>Internal pro chart inspired by Hyperliquid layout.</p>
+        <h1>ASTER Chart</h1>
+        <p>Live futures chart and orderbook with ASTER USDT symbols.</p>
         <div class="nav-links">
           <a href="/">Dashboard</a>
           <a href="/manual">Manual Trade</a>
-          <a href="/eth-chart" class="active">ETH Chart</a>
+          <a href="/aster-chart" class="active">ASTER Chart</a>
+          <a href="/aster-trading">AsterTrading</a>
           <a href="/chatlog">ChatLog</a>
         </div>
       </header>
 
       <section class="top-ticker">
-        <div class="tk"><span class="k">Symbol</span><span class="v">ETHUSDT</span></div>
+        <div class="tk"><span class="k">Symbol</span><span class="v" id="tk-symbol">ETHUSDT</span></div>
         <div class="tk"><span class="k">Mark</span><span class="v" id="tk-mark">-</span></div>
         <div class="tk"><span class="k">Index</span><span class="v" id="tk-index">-</span></div>
         <div class="tk"><span class="k">24h Change</span><span class="v" id="tk-change">-</span></div>
@@ -62,6 +82,10 @@
       <section class="trading-shell">
         <div class="card chart-card">
           <div class="chart-toolbar">
+            <div class="symbol-group">
+              <input id="symbol-search" type="text" placeholder="Search USDT symbol" />
+              <select id="symbol-select"></select>
+            </div>
             <div class="tf-group" id="tf-group">
               <button class="tf-btn" data-tf="1m">1m</button>
               <button class="tf-btn active" data-tf="5m">5m</button>
@@ -89,7 +113,8 @@
     </div>
 
     <script>
-      const symbol = 'ETHUSDT';
+      let selectedSymbol = 'ETHUSDT';
+      let allSymbols = [];
       let timeframe = '5m';
       let nextFundingTime = 0;
       let chart;
@@ -143,8 +168,37 @@
         });
       }
 
+      function setSymbol(symbol) {
+        if (!symbol) return;
+        selectedSymbol = symbol.toUpperCase();
+        localStorage.setItem('aster_chart_symbol', selectedSymbol);
+        document.getElementById('tk-symbol').textContent = selectedSymbol;
+      }
+
+      function renderSymbolOptions(filterText = '') {
+        const select = document.getElementById('symbol-select');
+        const q = filterText.trim().toUpperCase();
+        const filtered = allSymbols.filter((s) => (!q ? true : s.includes(q)));
+        select.innerHTML = filtered.map((s) => `<option value="${s}">${s}</option>`).join('');
+        if (!filtered.includes(selectedSymbol)) {
+          setSymbol(filtered[0] || 'ETHUSDT');
+        }
+        select.value = selectedSymbol;
+      }
+
+      async function loadSymbols() {
+        const data = await fetchJson('/api/aster/symbols', 8000);
+        const items = Array.isArray(data.items) ? data.items : [];
+        allSymbols = items.length ? items : ['ETHUSDT'];
+        const saved = (localStorage.getItem('aster_chart_symbol') || 'ETHUSDT').toUpperCase();
+        setSymbol(allSymbols.includes(saved) ? saved : (allSymbols.includes('ETHUSDT') ? 'ETHUSDT' : allSymbols[0]));
+        renderSymbolOptions('');
+      }
+
       async function refreshOverview() {
+        const symbol = selectedSymbol;
         const data = await fetchJson(`/api/aster/overview?symbol=${symbol}`);
+        if (symbol !== selectedSymbol) return;
         document.getElementById('tk-mark').textContent = money(data.markPrice);
         document.getElementById('tk-index').textContent = money(data.indexPrice);
         const ch = Number(data.priceChangePercent || 0);
@@ -159,9 +213,11 @@
       async function refreshKlines() {
         if (inFlightKline) return;
         inFlightKline = true;
-        document.getElementById('chart-status').textContent = `Loading ${timeframe} candles...`;
+        const symbol = selectedSymbol;
+        document.getElementById('chart-status').textContent = `Loading ${symbol} ${timeframe} candles...`;
         try {
           const data = await fetchJson(`/api/aster/klines?symbol=${symbol}&interval=${timeframe}&limit=400`);
+          if (symbol !== selectedSymbol) return;
           const items = data.items || [];
           const candles = items.map((k) => ({
             time: Math.floor(Number(k[0]) / 1000),
@@ -180,7 +236,7 @@
           chart.timeScale().fitContent();
           const status = document.getElementById('chart-status');
           status.className = 'live-mini mini-ok';
-          status.textContent = `Live ${timeframe} - ${new Date().toLocaleTimeString()}`;
+          status.textContent = `Live ${symbol} ${timeframe} - ${new Date().toLocaleTimeString()}`;
         } catch (e) {
           const status = document.getElementById('chart-status');
           status.className = 'live-mini mini-warn';
@@ -209,8 +265,10 @@
       async function refreshDepth() {
         if (inFlightDepth) return;
         inFlightDepth = true;
+        const symbol = selectedSymbol;
         try {
           const data = await fetchJson(`/api/aster/depth?symbol=${symbol}&limit=10`);
+          if (symbol !== selectedSymbol) return;
           const asks = (data.asks || []).slice(0, 10).reverse();
           const bids = (data.bids || []).slice(0, 10);
           renderSide(document.getElementById('asks'), asks, 'ask');
@@ -221,7 +279,7 @@
           document.getElementById('spread').textContent = `Spread: ${money(spread)} (${bestBid ? ((spread / bestBid) * 100).toFixed(4) : '0.0000'}%)`;
           const s = document.getElementById('book-status');
           s.className = 'live-mini mini-ok';
-          s.textContent = `Orderbook live - ${new Date().toLocaleTimeString()}`;
+          s.textContent = `${symbol} orderbook live - ${new Date().toLocaleTimeString()}`;
         } catch (e) {
           const s = document.getElementById('book-status');
           s.className = 'live-mini mini-err';
@@ -231,18 +289,6 @@
         }
       }
 
-      function startFundingCountdown() {
-        setInterval(() => {
-          if (!nextFundingTime) return;
-          const ms = Math.max(0, nextFundingTime - Date.now());
-          const hh = String(Math.floor(ms / 3600000)).padStart(2, '0');
-          const mm = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0');
-          const ss = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
-          const base = document.getElementById('tk-oi').textContent.split(' / ')[0] || '-';
-          document.getElementById('tk-oi').textContent = `${base} / Funding in ${hh}:${mm}:${ss}`;
-        }, 1000);
-      }
-
       function bindTimeframeButtons() {
         const group = document.getElementById('tf-group');
         group.querySelectorAll('.tf-btn').forEach((btn) => {
@@ -250,28 +296,41 @@
             group.querySelectorAll('.tf-btn').forEach((b) => b.classList.remove('active'));
             btn.classList.add('active');
             timeframe = btn.dataset.tf;
-            try {
-              await refreshKlines();
-            } catch (e) {
-              document.getElementById('chart-status').textContent = `Kline load error: ${e}`;
-            }
+            await refreshKlines();
           });
+        });
+      }
+
+      function bindSymbolControls() {
+        const search = document.getElementById('symbol-search');
+        const select = document.getElementById('symbol-select');
+        search.addEventListener('input', () => {
+          renderSymbolOptions(search.value || '');
+        });
+        select.addEventListener('change', async () => {
+          setSymbol(select.value || 'ETHUSDT');
+          await refreshOverview();
+          await refreshKlines();
+          await refreshDepth();
         });
       }
 
       async function boot() {
         buildChart();
         bindTimeframeButtons();
-        startFundingCountdown();
-        refreshOverview().catch(() => {});
-        refreshKlines().catch(() => {});
-        refreshDepth().catch(() => {});
+        bindSymbolControls();
+        await loadSymbols();
+        await refreshOverview();
+        await refreshKlines();
+        await refreshDepth();
         setInterval(() => refreshOverview().catch(() => {}), 3000);
         setInterval(() => refreshDepth().catch(() => {}), 2000);
         setInterval(() => refreshKlines().catch(() => {}), 12000);
       }
 
-      boot();
+      boot().catch((e) => {
+        document.getElementById('chart-status').textContent = `Init error: ${e}`;
+      });
     </script>
   </body>
 </html>

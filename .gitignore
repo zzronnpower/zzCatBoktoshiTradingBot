@@ -1,4 +1,6 @@
 .env
+BoktoshiBotModule/.env
+AsterTradingModule/.env
 data/
 __pycache__/
 *.pyc

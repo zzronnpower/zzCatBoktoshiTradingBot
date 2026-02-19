@@ -3,7 +3,8 @@ services:
     build: .
     container_name: mtc-bot
     env_file:
-      - .env
+      - BoktoshiBotModule/.env
+      - AsterTradingModule/.env
     ports:
       - "8000:8000"
     volumes:

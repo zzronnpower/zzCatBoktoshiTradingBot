@@ -1,6 +1,6 @@
 # PROJECT_LOG
 
-Last updated: 2026-02-19 (manual save JSON error fix)
+Last updated: 2026-02-19 (manual pause/resume button state sync)
 Project: `zzCatBoktoshiTradingBot`
 
 ## 1) Project Intent
@@ -280,6 +280,13 @@ Important (latest):
 - Fixed backend bug in `app/main.py` where `/api/bot/settings` response path was broken after strategy endpoint insertion, causing 500 `ResponseValidationError`.
 - Fixed frontend JSON parsing in `app/templates/manual.html` to safely handle non-JSON error bodies and show readable message.
 - Verified `POST /api/bot/settings` now returns valid JSON (HTTP 200).
+
+### M24 - Manual strategy control button UX
+
+- Updated `/manual` strategy control button states based on runtime strategy state:
+  - When strategy is `running`: `Resume` is disabled (gray), `Pause` is enabled.
+  - When strategy is `paused`: `Pause` is disabled (gray), `Resume` is enabled.
+- Added `syncStrategyButtons()` in `app/templates/manual.html` and wired it to live status refresh.
 
 ## 6) Current Endpoints (Operational)
 

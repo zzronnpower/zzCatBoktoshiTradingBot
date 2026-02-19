@@ -181,13 +181,23 @@
         container.innerHTML = html;
       }
 
+      function syncStrategyButtons(strategyState) {
+        const isPaused = String(strategyState || '').toLowerCase() === 'paused';
+        const btnPause = document.getElementById('btn-pause');
+        const btnResume = document.getElementById('btn-resume');
+        if (btnPause) btnPause.disabled = isPaused;
+        if (btnResume) btnResume.disabled = !isPaused;
+      }
+
       async function refreshPositions() {
         const [data, status] = await Promise.all([fetchJson('/api/open-positions'), fetchJson('/api/status')]);
         const strategy = data.strategy_position || null;
         const manualPositions = Array.isArray(data.manual_positions) && data.manual_positions.length
           ? data.manual_positions
           : (data.manual_position ? [data.manual_position] : []);
-        document.getElementById('strategy-state').textContent = `Strategy state: ${status.strategy_state || 'running'} | ${status?.strategy?.name || '-'}`;
+        const strategyState = status.strategy_state || 'running';
+        document.getElementById('strategy-state').textContent = `Strategy state: ${strategyState} | ${status?.strategy?.name || '-'}`;
+        syncStrategyButtons(strategyState);
         renderTable(
           document.getElementById('positions-strategy'),
           ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'Margin', 'Size', 'uPnL', 'Opened'],
@@ -406,7 +416,7 @@
         } catch (e) {
           renderResult({ success: false, message: String(e) }, true);
         } finally {
-          btn.disabled = false;
+          await refreshPositions();
           btn.textContent = 'Pause Running Bot';
         }
       }
@@ -422,7 +432,7 @@
         } catch (e) {
           renderResult({ success: false, message: String(e) }, true);
         } finally {
-          btn.disabled = false;
+          await refreshPositions();
           btn.textContent = 'Resume Bot';
         }
       }

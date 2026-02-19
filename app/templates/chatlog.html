@@ -544,6 +544,13 @@ Và đã cập nhật `docker-compose.yml` để load cả 2 file env này.</pre
 - Sửa backend `/api/bot/settings` (app/main.py) để luôn return JSON đúng schema, không còn 500 ResponseValidationError.
 - Sửa `fetchJson` ở manual page để parse fallback text khi response không phải JSON.
 - Đã verify lại: POST `/api/bot/settings` trả HTTP 200 + JSON hợp lệ.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>chỉnh code: khi BOT đang chạy thì nút Resume bị mờ/disable; khi BOT paused thì Resume bình thường và Pause bị mờ/disable.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã cập nhật trong tab `/manual`:
+- Strategy `running`: nút `Resume Bot` disabled, `Pause Running Bot` enabled.
+- Strategy `paused`: nút `Pause Running Bot` disabled, `Resume Bot` enabled.
+- Nút được sync tự động theo trạng thái real-time từ `/api/status`.</pre></div>
           </div>
         </div>
       </section>

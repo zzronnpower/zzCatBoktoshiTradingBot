@@ -9,27 +9,28 @@
     <style>
       .trading-shell { display: grid; grid-template-columns: 1fr 340px; gap: 12px; }
       .top-ticker { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 8px; margin-bottom: 12px; }
-      .tk { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: linear-gradient(180deg,#162742,#101d33); }
+      .tk { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: linear-gradient(180deg, var(--chart-card-1), var(--chart-card-2)); }
       .tk .k { display:block; color: var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px; margin-bottom:6px; }
       .tk .v { font-size:18px; font-weight:700; }
       #tk-oi { white-space: nowrap; }
       .chart-card { min-height: 620px; }
       .chart-toolbar { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; flex-wrap: wrap; }
+      .overlay-note { color: var(--muted); font-size: 12px; }
       .symbol-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
       .symbol-group input, .symbol-group select {
         border: 1px solid var(--line);
-        background: rgba(255,255,255,.04);
+        background: var(--input-bg);
         color: var(--text);
         border-radius: 8px;
         padding: 8px 10px;
       }
       .symbol-group select {
         color-scheme: dark;
-        background: linear-gradient(180deg, #1b2944 0%, #16243d 100%);
+        background: linear-gradient(180deg, var(--chart-select-1) 0%, var(--chart-select-2) 100%);
       }
       .symbol-group select option {
-        background: #101b2f;
-        color: #e8f0fb;
+        background: var(--chart-select-option);
+        color: var(--text);
       }
       .symbol-group input { width: 170px; }
       .symbol-group select { width: 170px; }
@@ -94,6 +95,7 @@
               <button class="tf-btn" data-tf="4h">4h</button>
               <button class="tf-btn" data-tf="1d">1d</button>
             </div>
+            <div class="overlay-note" id="overlay-status">Strategy overlay: loading...</div>
             <div class="live-mini" id="chart-status">Loading...</div>
           </div>
           <div id="chart"></div>
@@ -120,8 +122,21 @@
       let chart;
       let candleSeries;
       let volumeSeries;
+      let ma50Series;
+      let emaFastSeries;
+      let emaSlowSeries;
+      let entryPriceLine;
+      let stopLossLine;
+      let takeProfitLine;
       let inFlightKline = false;
       let inFlightDepth = false;
+      let inFlightOverlay = false;
+      let depthSocket = null;
+      let wsReconnectTimer = null;
+      let wsBackoffMs = 1000;
+      let wsConnected = false;
+      let wsStreamSymbol = '';
+      let lastWsDepthAt = 0;
 
       const nf = (n, max = 2) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: max });
       const money = (n) => nf(n, 2);
@@ -145,15 +160,40 @@
 
       function buildChart() {
         const el = document.getElementById('chart');
+        const styles = getComputedStyle(document.documentElement);
+        const chartBg = styles.getPropertyValue('--chart-bg').trim() || '#0d1627';
+        const chartGrid = styles.getPropertyValue('--chart-grid').trim() || 'rgba(255, 255, 255, 0.06)';
+        const chartText = styles.getPropertyValue('--text').trim() || '#c8d4e3';
+        const chartLine = styles.getPropertyValue('--line').trim() || 'rgba(255, 255, 255, 0.08)';
+        const chartUp = styles.getPropertyValue('--chart-up').trim() || '#62dca4';
+        const chartDown = styles.getPropertyValue('--chart-down').trim() || '#ff6b7d';
         chart = LightweightCharts.createChart(el, {
-          layout: { background: { type: 'solid', color: '#0d1627' }, textColor: '#c8d4e3' },
-          grid: { vertLines: { color: 'rgba(255,255,255,.06)' }, horzLines: { color: 'rgba(255,255,255,.06)' } },
-          rightPriceScale: { borderColor: 'rgba(255,255,255,.08)' },
-          timeScale: { borderColor: 'rgba(255,255,255,.08)', timeVisible: true, secondsVisible: false },
+          layout: { background: { type: 'solid', color: chartBg }, textColor: chartText },
+          grid: { vertLines: { color: chartGrid }, horzLines: { color: chartGrid } },
+          rightPriceScale: { borderColor: chartLine },
+          timeScale: { borderColor: chartLine, timeVisible: true, secondsVisible: false },
           crosshair: { mode: 1 },
         });
         candleSeries = chart.addCandlestickSeries({
-          upColor: '#62dca4', downColor: '#ff6b7d', borderUpColor: '#62dca4', borderDownColor: '#ff6b7d', wickUpColor: '#62dca4', wickDownColor: '#ff6b7d',
+          upColor: chartUp, downColor: chartDown, borderUpColor: chartUp, borderDownColor: chartDown, wickUpColor: chartUp, wickDownColor: chartDown,
+        });
+        ma50Series = chart.addLineSeries({
+          color: '#f3c969',
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: true,
+        });
+        emaFastSeries = chart.addLineSeries({
+          color: '#7ec8ff',
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: true,
+        });
+        emaSlowSeries = chart.addLineSeries({
+          color: '#ffb86f',
+          lineWidth: 2,
+          priceLineVisible: false,
+          lastValueVisible: true,
         });
         volumeSeries = chart.addHistogramSeries({
           color: '#3c7cf5',
@@ -166,6 +206,149 @@
         window.addEventListener('resize', () => {
           chart.applyOptions({ width: el.clientWidth, height: 520 });
         });
+        window.addEventListener('themechange', () => {
+          const s = getComputedStyle(document.documentElement);
+          const bg = s.getPropertyValue('--chart-bg').trim() || '#0d1627';
+          const g = s.getPropertyValue('--chart-grid').trim() || 'rgba(255,255,255,.06)';
+          const t = s.getPropertyValue('--text').trim() || '#c8d4e3';
+          const l = s.getPropertyValue('--line').trim() || 'rgba(255,255,255,.08)';
+          const up = s.getPropertyValue('--chart-up').trim() || '#62dca4';
+          const dn = s.getPropertyValue('--chart-down').trim() || '#ff6b7d';
+          const accent = s.getPropertyValue('--accent').trim() || '#f3c969';
+          chart.applyOptions({
+            layout: { background: { type: 'solid', color: bg }, textColor: t },
+            grid: { vertLines: { color: g }, horzLines: { color: g } },
+            rightPriceScale: { borderColor: l },
+            timeScale: { borderColor: l, timeVisible: true, secondsVisible: false },
+          });
+          candleSeries.applyOptions({ upColor: up, downColor: dn, borderUpColor: up, borderDownColor: dn, wickUpColor: up, wickDownColor: dn });
+          ma50Series.applyOptions({ color: accent });
+          emaFastSeries.applyOptions({ color: '#7ec8ff' });
+          emaSlowSeries.applyOptions({ color: '#ffb86f' });
+        });
+      }
+
+      function clearPositionLines() {
+        if (entryPriceLine) {
+          candleSeries.removePriceLine(entryPriceLine);
+          entryPriceLine = null;
+        }
+        if (stopLossLine) {
+          candleSeries.removePriceLine(stopLossLine);
+          stopLossLine = null;
+        }
+        if (takeProfitLine) {
+          candleSeries.removePriceLine(takeProfitLine);
+          takeProfitLine = null;
+        }
+      }
+
+      function clearStrategyOverlay(note = '') {
+        ma50Series.setData([]);
+        emaFastSeries.setData([]);
+        emaSlowSeries.setData([]);
+        candleSeries.setMarkers([]);
+        clearPositionLines();
+        if (note) {
+          document.getElementById('overlay-status').textContent = note;
+        }
+      }
+
+      function applyPositionLines(position) {
+        clearPositionLines();
+        if (!position) return;
+        const entry = Number(position.entry_price || 0);
+        const sl = Number(position.stop_loss || 0);
+        const tp = Number(position.take_profit || 0);
+        if (entry > 0) {
+          entryPriceLine = candleSeries.createPriceLine({
+            price: entry,
+            color: '#6fd3a8',
+            lineWidth: 1,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: 'Entry',
+          });
+        }
+        if (sl > 0) {
+          stopLossLine = candleSeries.createPriceLine({
+            price: sl,
+            color: '#ff8e8e',
+            lineWidth: 1,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: 'SL',
+          });
+        }
+        if (tp > 0) {
+          takeProfitLine = candleSeries.createPriceLine({
+            price: tp,
+            color: '#ffd88f',
+            lineWidth: 1,
+            lineStyle: 2,
+            axisLabelVisible: true,
+            title: 'TP',
+          });
+        }
+      }
+
+      async function refreshStrategyOverlay() {
+        if (inFlightOverlay) return;
+        if (selectedSymbol !== 'ETHUSDT') {
+          clearStrategyOverlay('Strategy overlay: ETHUSDT only');
+          return;
+        }
+        inFlightOverlay = true;
+        try {
+          const data = await fetchJson(`/api/strategy/overlay?symbol=ETHUSDT&interval=${timeframe}&limit=320`, 9000);
+          if (!data.enabled) {
+            const required = String(data.required_interval || '').trim();
+            const hint = required ? ` | switch timeframe to ${required}` : '';
+            clearStrategyOverlay(`Strategy overlay: ${data.message || 'not available'}${hint}`);
+            return;
+          }
+          const maData = Array.isArray(data.ma50) ? data.ma50.map((x) => ({ time: Number(x.time), value: Number(x.value) })) : [];
+          const emaFastData = Array.isArray(data.ema_fast) ? data.ema_fast.map((x) => ({ time: Number(x.time), value: Number(x.value) })) : [];
+          const emaSlowData = Array.isArray(data.ema_slow) ? data.ema_slow.map((x) => ({ time: Number(x.time), value: Number(x.value) })) : [];
+          ma50Series.setData(maData);
+          emaFastSeries.setData(emaFastData);
+          emaSlowSeries.setData(emaSlowData);
+
+          const entries = Array.isArray(data.entry_markers) ? data.entry_markers : [];
+          const entryMarkers = entries.map((m) => ({
+            time: Number(m.time),
+            position: 'belowBar',
+            color: '#6fd3a8',
+            shape: 'arrowUp',
+            text: String(m.text || 'Entry'),
+          }));
+
+          const pos = data.position || null;
+          if (pos && Number(pos.opened_at || 0) > 0 && Number(pos.entry_price || 0) > 0) {
+            entryMarkers.push({
+              time: Number(pos.opened_at),
+              position: 'belowBar',
+              color: '#9fd9ff',
+              shape: 'circle',
+              text: `Live ${Number(pos.entry_price).toFixed(2)}`,
+            });
+          }
+          candleSeries.setMarkers(entryMarkers);
+          applyPositionLines(pos);
+
+          const strategyId = data.strategy || '-';
+          const signalCount = entries.length;
+          const required = data.required_interval || data.interval || '-';
+          const lineLabel = emaFastData.length || emaSlowData.length ? 'EMA20/EMA50' : 'MA50';
+          const statusText = pos
+            ? `Strategy overlay: ${strategyId} | ${lineLabel} | ${required} | signals ${signalCount} | position ${pos.position_id || '-'}`
+            : `Strategy overlay: ${strategyId} | ${lineLabel} | ${required} | signals ${signalCount} | no open strategy position`;
+          document.getElementById('overlay-status').textContent = statusText;
+        } catch (e) {
+          clearStrategyOverlay(`Strategy overlay delayed (${e})`);
+        } finally {
+          inFlightOverlay = false;
+        }
       }
 
       function setSymbol(symbol) {
@@ -262,24 +445,141 @@
         target.innerHTML = html;
       }
 
+      function renderDepthBook(asksIn, bidsIn, source = 'rest') {
+        const asks = (asksIn || []).slice(0, 10).reverse();
+        const bids = (bidsIn || []).slice(0, 10);
+        renderSide(document.getElementById('asks'), asks, 'ask');
+        renderSide(document.getElementById('bids'), bids, 'bid');
+        const bestAsk = asks.length ? Number(asks[asks.length - 1][0]) : 0;
+        const bestBid = bids.length ? Number(bids[0][0]) : 0;
+        const spread = bestAsk > 0 && bestBid > 0 ? bestAsk - bestBid : 0;
+        document.getElementById('spread').textContent = `Spread: ${money(spread)} (${bestBid ? ((spread / bestBid) * 100).toFixed(4) : '0.0000'}%)`;
+        const s = document.getElementById('book-status');
+        s.className = 'live-mini mini-ok';
+        s.textContent = source === 'ws'
+          ? `${selectedSymbol} orderbook ws live - ${new Date().toLocaleTimeString()}`
+          : `${selectedSymbol} orderbook live - ${new Date().toLocaleTimeString()}`;
+      }
+
+      function applyMarkStream(mark) {
+        const markPrice = Number(mark.p || mark.markPrice || 0);
+        const indexPrice = Number(mark.i || mark.indexPrice || 0);
+        const fundingRate = Number(mark.r || mark.lastFundingRate || 0);
+        if (markPrice > 0) document.getElementById('tk-mark').textContent = money(markPrice);
+        if (indexPrice > 0) document.getElementById('tk-index').textContent = money(indexPrice);
+        const oiText = document.getElementById('tk-oi').textContent || '-';
+        const oiPrefix = oiText.includes('/') ? oiText.split('/')[0].trim() : oiText;
+        document.getElementById('tk-oi').textContent = `${oiPrefix} / ${pct(fundingRate * 100)}`;
+      }
+
+      function disconnectDepthStream() {
+        if (wsReconnectTimer) {
+          clearTimeout(wsReconnectTimer);
+          wsReconnectTimer = null;
+        }
+        if (depthSocket) {
+          try {
+            depthSocket.onopen = null;
+            depthSocket.onmessage = null;
+            depthSocket.onerror = null;
+            depthSocket.onclose = null;
+            depthSocket.close();
+          } catch (_) {}
+          depthSocket = null;
+        }
+        wsConnected = false;
+      }
+
+      function connectDepthStream() {
+        if (selectedSymbol !== 'ETHUSDT' && !selectedSymbol.endsWith('USDT')) {
+          disconnectDepthStream();
+          return;
+        }
+        if (depthSocket) {
+          disconnectDepthStream();
+        }
+        const sym = selectedSymbol.toLowerCase();
+        wsStreamSymbol = selectedSymbol;
+        const streams = `${sym}@depth10@100ms/${sym}@markPrice@1s`;
+        const wsUrl = `wss://fstream.asterdex.com/stream?streams=${streams}`;
+        const s = document.getElementById('book-status');
+        s.className = 'live-mini mini-warn';
+        s.textContent = `${selectedSymbol} orderbook connecting websocket...`;
+
+        try {
+          depthSocket = new WebSocket(wsUrl);
+        } catch (e) {
+          wsConnected = false;
+          s.className = 'live-mini mini-err';
+          s.textContent = `WebSocket unavailable (${e}), using REST fallback`;
+          return;
+        }
+
+        depthSocket.onopen = () => {
+          wsConnected = true;
+          wsBackoffMs = 1000;
+          const x = document.getElementById('book-status');
+          x.className = 'live-mini mini-ok';
+          x.textContent = `${selectedSymbol} orderbook websocket connected`;
+        };
+
+        depthSocket.onmessage = (event) => {
+          let payload;
+          try {
+            payload = JSON.parse(event.data || '{}');
+          } catch (_) {
+            return;
+          }
+          const data = payload && payload.data ? payload.data : payload;
+          if (!data || typeof data !== 'object') return;
+          const stream = String(payload.stream || '').toLowerCase();
+          if (wsStreamSymbol !== selectedSymbol) return;
+
+          if (stream.includes('@depth') || data.e === 'depthUpdate') {
+            const asks = Array.isArray(data.asks) ? data.asks : (Array.isArray(data.a) ? data.a : []);
+            const bids = Array.isArray(data.bids) ? data.bids : (Array.isArray(data.b) ? data.b : []);
+            if (asks.length || bids.length) {
+              lastWsDepthAt = Date.now();
+              renderDepthBook(asks, bids, 'ws');
+            }
+            return;
+          }
+
+          if (stream.includes('@markprice') || data.e === 'markPriceUpdate') {
+            applyMarkStream(data);
+          }
+        };
+
+        depthSocket.onerror = () => {
+          wsConnected = false;
+        };
+
+        depthSocket.onclose = () => {
+          wsConnected = false;
+          depthSocket = null;
+          if (wsStreamSymbol !== selectedSymbol) return;
+          const x = document.getElementById('book-status');
+          x.className = 'live-mini mini-warn';
+          x.textContent = `${selectedSymbol} websocket disconnected, retry in ${Math.round(wsBackoffMs / 1000)}s (REST fallback active)`;
+          if (wsReconnectTimer) clearTimeout(wsReconnectTimer);
+          wsReconnectTimer = setTimeout(() => {
+            connectDepthStream();
+          }, wsBackoffMs);
+          wsBackoffMs = Math.min(wsBackoffMs * 2, 15000);
+        };
+      }
+
       async function refreshDepth() {
         if (inFlightDepth) return;
+        if (wsConnected && (Date.now() - lastWsDepthAt) < 8000) {
+          return;
+        }
         inFlightDepth = true;
         const symbol = selectedSymbol;
         try {
           const data = await fetchJson(`/api/aster/depth?symbol=${symbol}&limit=10`);
           if (symbol !== selectedSymbol) return;
-          const asks = (data.asks || []).slice(0, 10).reverse();
-          const bids = (data.bids || []).slice(0, 10);
-          renderSide(document.getElementById('asks'), asks, 'ask');
-          renderSide(document.getElementById('bids'), bids, 'bid');
-          const bestAsk = asks.length ? Number(asks[asks.length - 1][0]) : 0;
-          const bestBid = bids.length ? Number(bids[0][0]) : 0;
-          const spread = bestAsk > 0 && bestBid > 0 ? bestAsk - bestBid : 0;
-          document.getElementById('spread').textContent = `Spread: ${money(spread)} (${bestBid ? ((spread / bestBid) * 100).toFixed(4) : '0.0000'}%)`;
-          const s = document.getElementById('book-status');
-          s.className = 'live-mini mini-ok';
-          s.textContent = `${symbol} orderbook live - ${new Date().toLocaleTimeString()}`;
+          renderDepthBook(data.asks || [], data.bids || [], 'rest');
         } catch (e) {
           const s = document.getElementById('book-status');
           s.className = 'live-mini mini-err';
@@ -297,6 +597,7 @@
             btn.classList.add('active');
             timeframe = btn.dataset.tf;
             await refreshKlines();
+            await refreshStrategyOverlay();
           });
         });
       }
@@ -309,28 +610,37 @@
         });
         select.addEventListener('change', async () => {
           setSymbol(select.value || 'ETHUSDT');
+          connectDepthStream();
           await refreshOverview();
           await refreshKlines();
+          await refreshStrategyOverlay();
           await refreshDepth();
         });
       }
 
       async function boot() {
         buildChart();
+        window.addEventListener('beforeunload', () => {
+          disconnectDepthStream();
+        });
         bindTimeframeButtons();
         bindSymbolControls();
         await loadSymbols();
         await refreshOverview();
         await refreshKlines();
+        await refreshStrategyOverlay();
+        connectDepthStream();
         await refreshDepth();
         setInterval(() => refreshOverview().catch(() => {}), 3000);
         setInterval(() => refreshDepth().catch(() => {}), 2000);
         setInterval(() => refreshKlines().catch(() => {}), 12000);
+        setInterval(() => refreshStrategyOverlay().catch(() => {}), 12000);
       }
 
       boot().catch((e) => {
         document.getElementById('chart-status').textContent = `Init error: ${e}`;
       });
     </script>
+    <script src="/static/theme.js"></script>
   </body>
 </html>

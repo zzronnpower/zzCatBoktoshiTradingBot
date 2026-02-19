@@ -10,6 +10,12 @@ from starlette.requests import Request
 
 from .aster_client import AsterClient
 from .bot_runner import BotRunner
+from BoktoshiBotModule.strategy import (
+    build_ema_series,
+    build_ma50_series,
+    detect_ema_rsi_long_markers,
+    detect_ma50_crossup_markers,
+)
 from AsterTradingModule import AsterManualTradingService, AsterTradingConfig
 from .storage import (
     get_all_kv,
@@ -55,6 +61,13 @@ def _parse_json(value: str) -> Any:
         return json.loads(value)
     except Exception:
         return value
+
+
+def _safe_float(value: Any, default: float = 0.0) -> float:
+    try:
+        return float(value)
+    except (TypeError, ValueError):
+        return default
 
 
 _load_env_file_if_exists("BoktoshiBotModule/.env")
@@ -123,6 +136,11 @@ def manual_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("manual.html", {"request": request})
 
 
+@app.get("/strategy-summary", response_class=HTMLResponse)
+def strategy_summary_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("strategy_summary.html", {"request": request})
+
+
 @app.get("/chatlog", response_class=HTMLResponse)
 def chatlog_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("chatlog.html", {"request": request})
@@ -150,6 +168,9 @@ def status() -> Dict[str, Any]:
     active_strategy = runner.get_active_strategy()
     strategy_map = {item["id"]: item for item in runner.list_strategies()}
     strategy_info = strategy_map.get(active_strategy, strategy_map.get(runner.STRATEGY_MA50, {}))
+    is_ema = active_strategy == runner.STRATEGY_EMA_RSI
+    ema_runtime_raw = _parse_json(kv.get(runner.EMA_STATE_KEY, ""))
+    ema_runtime = ema_runtime_raw if isinstance(ema_runtime_raw, dict) else None
     return {
         "bot_status": kv.get("bot_status", "unknown"),
         "strategy_state": "paused" if runner.is_strategy_paused() else "running",
@@ -167,6 +188,10 @@ def status() -> Dict[str, Any]:
             "leverage": runtime_settings["leverage"],
             "sl_capital_pct": runtime_settings["sl_capital_pct"],
             "tp_capital_pct": runtime_settings["tp_capital_pct"],
+            "risk_mode": "R_MULTIPLE_TRAILING" if is_ema else "CAPITAL_PCT_FIXED",
+            "tp_r_multiple": 2 if is_ema else None,
+            "trailing_activation_r": 1 if is_ema else None,
+            "ema_runtime": ema_runtime if is_ema else None,
         },
         "last_signal": _parse_json(kv.get("last_signal", "")),
     }
@@ -357,6 +382,109 @@ def aster_symbols() -> Dict[str, Any]:
         return {"items": items, "count": len(items)}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/strategy/overlay")
+def strategy_overlay(symbol: str = "ETHUSDT", interval: str = "4h", limit: int = 280) -> Dict[str, Any]:
+    selected_symbol = str(symbol or "ETHUSDT").upper().strip()
+    active_strategy = runner.get_active_strategy()
+    required_interval = "15m" if active_strategy == runner.STRATEGY_EMA_RSI else "4h"
+
+    if selected_symbol != runner.trade_pair:
+        return {
+            "enabled": False,
+            "source": "hyperliquid",
+            "symbol": selected_symbol,
+            "strategy": active_strategy,
+            "required_interval": required_interval,
+            "message": "Strategy overlay is ETHUSDT-only.",
+            "ma50": [],
+            "ema_fast": [],
+            "ema_slow": [],
+            "entry_markers": [],
+            "position": None,
+        }
+
+    requested_interval = str(interval or required_interval).lower().strip()
+    if requested_interval != required_interval:
+        return {
+            "enabled": False,
+            "source": "hyperliquid",
+            "symbol": runner.trade_pair,
+            "interval": requested_interval,
+            "strategy": active_strategy,
+            "required_interval": required_interval,
+            "message": f"Overlay for {active_strategy} is available on {required_interval} timeframe only.",
+            "ma50": [],
+            "ema_fast": [],
+            "ema_slow": [],
+            "entry_markers": [],
+            "position": None,
+        }
+
+    bars = max(80, min(int(limit), 600))
+    try:
+        candles = runner.hyperliquid.get_candles(runner.trade_coin, interval=required_interval, bars=bars)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=f"Failed to fetch Hyperliquid candles: {exc}") from exc
+
+    ma50 = []
+    ema_fast = []
+    ema_slow = []
+    entry_markers = []
+    message = ""
+    if active_strategy == runner.STRATEGY_EMA_RSI:
+        ema_fast = build_ema_series(candles, 20)
+        ema_slow = build_ema_series(candles, 50)
+        entry_markers = detect_ema_rsi_long_markers(candles)
+        message = "EMA20/EMA50 and EMA-RSI entry markers are computed from Hyperliquid candles."
+    else:
+        ma50 = build_ma50_series(candles)
+        entry_markers = detect_ma50_crossup_markers(candles)
+        message = "MA50 and entry markers are computed from Hyperliquid candles."
+
+    kv = get_all_kv(DB_PATH)
+    raw_positions = _parse_json(kv.get("positions", ""))
+    if isinstance(raw_positions, dict):
+        positions = raw_positions.get("positions", [])
+    elif isinstance(raw_positions, list):
+        positions = raw_positions
+    else:
+        positions = []
+    grouped = runner.classify_open_positions(positions if isinstance(positions, list) else [])
+    strategy_position = grouped.get("strategy_position") if isinstance(grouped, dict) else None
+
+    position_overlay = None
+    if isinstance(strategy_position, dict):
+        entry_price = _safe_float(strategy_position.get("entryPrice"), 0.0)
+        stop_loss = _safe_float(strategy_position.get("stopLoss"), 0.0)
+        take_profit = _safe_float(strategy_position.get("takeProfit"), 0.0)
+        opened_at_raw = _safe_float(strategy_position.get("openedAt"), 0.0)
+        opened_at_sec = int(opened_at_raw / 1000) if opened_at_raw > 1e12 else int(opened_at_raw)
+        position_overlay = {
+            "position_id": str(strategy_position.get("positionId", "")),
+            "coin": str(strategy_position.get("coin", "")),
+            "entry_price": entry_price,
+            "stop_loss": stop_loss,
+            "take_profit": take_profit,
+            "opened_at": opened_at_sec,
+            "unrealized_pnl": _safe_float(strategy_position.get("unrealizedPnl"), 0.0),
+        }
+
+    return {
+        "enabled": True,
+        "source": "hyperliquid",
+        "symbol": runner.trade_pair,
+        "interval": required_interval,
+        "strategy": active_strategy,
+        "required_interval": required_interval,
+        "message": message,
+        "ma50": ma50,
+        "ema_fast": ema_fast,
+        "ema_slow": ema_slow,
+        "entry_markers": entry_markers,
+        "position": position_overlay,
+    }
 
 
 @app.get("/api/aster-trading/account-overview")

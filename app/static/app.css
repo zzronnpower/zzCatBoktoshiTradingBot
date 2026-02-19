@@ -8,6 +8,95 @@
   --danger: #ff8e8e;
   --success: #89e6a8;
   --line: #243551;
+  --bg-glow-1: #163156;
+  --bg-glow-2: #1c4250;
+  --bg-grad-1: #0a1019;
+  --bg-grad-2: #0f1726;
+  --chart-card-1: #162742;
+  --chart-card-2: #101d33;
+  --chart-select-1: #1b2944;
+  --chart-select-2: #16243d;
+  --chart-select-option: #1c5b4a;
+  --chart-grid: rgba(255, 255, 255, 0.06);
+  --chart-bg: #0d1627;
+  --chart-up: #62dca4;
+  --chart-down: #ff6b7d;
+  --input-bg: rgba(255, 255, 255, 0.04);
+  --input-text: var(--text);
+  --button-text: #ffffff;
+  --dropdown-bg: #1f5f4d;
+  --dropdown-text: #effff7;
+  --dropdown-option-bg: #2a745f;
+  --dropdown-option-text: #f2fff9;
+  --dropdown-option-hover: #34907a;
+}
+
+html[data-theme="pinky"],
+body.theme-pinky {
+  --bg: #ead9c6;
+  --panel: #efe0cf;
+  --panel-soft: #e8d6c1;
+  --muted: #9f7468;
+  --text: #6f4a47;
+  --accent: #c07a87;
+  --danger: #b85f65;
+  --success: #9b7f62;
+  --line: #b68c85;
+  --bg-glow-1: #cfa397;
+  --bg-glow-2: #d7b7a3;
+  --bg-grad-1: #e7d4bf;
+  --bg-grad-2: #dfc9b2;
+  --chart-card-1: #f1e3d3;
+  --chart-card-2: #ead9c6;
+  --chart-select-1: #f4e8d9;
+  --chart-select-2: #eadac7;
+  --chart-select-option: #2e7f69;
+  --chart-grid: rgba(120, 82, 77, 0.14);
+  --chart-bg: #f3e7d8;
+  --chart-up: #bb7885;
+  --chart-down: #9f6b60;
+  --input-bg: #f8efe6;
+  --input-text: #694b47;
+  --button-text: #fff7f2;
+  --dropdown-bg: #2e7f69;
+  --dropdown-text: #f4fff8;
+  --dropdown-option-bg: #388f76;
+  --dropdown-option-text: #f6fffa;
+  --dropdown-option-hover: #42a488;
+}
+
+html[data-theme="light-green"],
+body.theme-light-green {
+  --bg: #d8dfc3;
+  --panel: #d4dcc0;
+  --panel-soft: #ccd5b6;
+  --muted: #607466;
+  --text: #3f5a4f;
+  --accent: #59786b;
+  --danger: #8f5f5f;
+  --success: #5a7f63;
+  --line: #6f877a;
+  --bg-glow-1: #b7c39d;
+  --bg-glow-2: #a5b491;
+  --bg-grad-1: #dce3c9;
+  --bg-grad-2: #cfd8b8;
+  --chart-card-1: #d8e0c3;
+  --chart-card-2: #ccd6b3;
+  --chart-select-1: #e2e8cf;
+  --chart-select-2: #d4dcc0;
+  --chart-select-option: #4f8f63;
+  --chart-grid: rgba(72, 103, 90, 0.16);
+  --chart-bg: #e2e8d2;
+  --chart-up: #5f8172;
+  --chart-down: #88665f;
+  --input-bg: #e7edd9;
+  --input-text: #3f5a4f;
+  --button-text: #f5f9f0;
+  --dropdown-bg: #4f8f63;
+  --dropdown-text: #f4fff7;
+  --dropdown-option-bg: #5d9e72;
+  --dropdown-option-text: #f6fff8;
+  --dropdown-option-hover: #67ac7d;
 }
 
 * {
@@ -17,9 +106,9 @@
 body {
   margin: 0;
   font-family: "Trebuchet MS", "Avenir Next", "Segoe UI", sans-serif;
-  background: radial-gradient(circle at 20% -10%, #163156 0%, transparent 35%),
-    radial-gradient(circle at 90% -20%, #1c4250 0%, transparent 30%),
-    linear-gradient(160deg, #0a1019 0%, #0f1726 100%);
+  background: radial-gradient(circle at 20% -10%, var(--bg-glow-1) 0%, transparent 35%),
+    radial-gradient(circle at 90% -20%, var(--bg-glow-2) 0%, transparent 30%),
+    linear-gradient(160deg, var(--bg-grad-1) 0%, var(--bg-grad-2) 100%);
   color: var(--text);
 }
 
@@ -275,17 +364,83 @@ th {
 
 .btn-primary {
   background: linear-gradient(180deg, #2ea043 0%, #238636 100%);
-  color: #fff;
+  color: var(--button-text);
 }
 
 .btn-danger {
   background: linear-gradient(180deg, #da3633 0%, #b62324 100%);
-  color: #fff;
+  color: var(--button-text);
 }
 
 .btn-warning {
   background: linear-gradient(180deg, #db9f18 0%, #b97910 100%);
-  color: #fff;
+  color: var(--button-text);
+}
+
+.kv-row input,
+.kv-row select,
+.card input,
+.card select {
+  border: 1px solid var(--line);
+  background: var(--input-bg);
+  color: var(--input-text);
+  border-radius: 8px;
+  padding: 8px 10px;
+}
+
+.kv-row select,
+.card select,
+.theme-dock select,
+select {
+  background: var(--dropdown-bg) !important;
+  color: var(--dropdown-text) !important;
+  -webkit-text-fill-color: var(--dropdown-text);
+  color-scheme: dark;
+}
+
+.kv-row select option,
+.card select option,
+.theme-dock select option,
+select option {
+  background: var(--dropdown-option-bg) !important;
+  color: var(--dropdown-option-text) !important;
+}
+
+.kv-row select option:checked,
+.card select option:checked,
+.theme-dock select option:checked,
+select option:checked {
+  background: var(--dropdown-option-hover) !important;
+  color: var(--dropdown-option-text) !important;
+}
+
+.theme-dock {
+  position: fixed;
+  right: 14px;
+  bottom: 14px;
+  z-index: 50;
+  border: 1px solid var(--line);
+  border-radius: 10px;
+  background: linear-gradient(180deg, var(--panel) 0%, var(--panel-soft) 100%);
+  color: var(--text);
+  padding: 8px 10px;
+  display: inline-flex;
+  align-items: center;
+  gap: 8px;
+  box-shadow: 0 8px 24px rgba(0, 0, 0, 0.2);
+}
+
+.theme-dock label {
+  color: var(--muted);
+  font-size: 12px;
+}
+
+.theme-dock select {
+  border: 1px solid var(--line);
+  background: var(--dropdown-bg);
+  color: var(--dropdown-text);
+  border-radius: 8px;
+  padding: 6px 8px;
 }
 
 .btn-row {
@@ -296,6 +451,62 @@ th {
 
 .manual-grid .card {
   min-height: 180px;
+}
+
+.strategy-summary-card {
+  border-color: rgba(99, 215, 176, 0.45);
+  background: linear-gradient(145deg, rgba(22, 34, 58, 0.96) 0%, rgba(20, 43, 58, 0.92) 60%, rgba(17, 31, 53, 0.98) 100%);
+}
+
+.strategy-summary-head {
+  display: flex;
+  align-items: center;
+  justify-content: space-between;
+  gap: 12px;
+}
+
+.strategy-chip {
+  border: 1px solid transparent;
+  border-radius: 999px;
+  padding: 6px 10px;
+  font-size: 12px;
+  font-weight: 700;
+  letter-spacing: 0.3px;
+}
+
+.strategy-chip.running {
+  color: #d8ffe8;
+  background: rgba(46, 160, 67, 0.25);
+  border-color: rgba(99, 215, 176, 0.5);
+}
+
+.strategy-chip.paused {
+  color: #fff3d6;
+  background: rgba(219, 159, 24, 0.25);
+  border-color: rgba(255, 208, 111, 0.5);
+}
+
+.strategy-summary-content {
+  display: flex;
+  flex-direction: column;
+  gap: 8px;
+}
+
+.summary-line {
+  border-left: 3px solid rgba(99, 215, 176, 0.65);
+  padding: 8px 10px;
+  border-radius: 8px;
+  background: rgba(255, 255, 255, 0.03);
+  color: #d6e5f3;
+  line-height: 1.5;
+}
+
+.summary-note {
+  border: 1px dashed rgba(168, 183, 202, 0.45);
+  border-radius: 10px;
+  padding: 12px;
+  color: var(--muted);
+  background: rgba(255, 255, 255, 0.02);
 }
 
 @media (max-width: 768px) {

@@ -14,6 +14,7 @@
         <div class="nav-links">
           <a href="/">Dashboard</a>
           <a href="/manual" class="active">Manual Trade</a>
+          <a href="/strategy-summary">Tóm tắt Strategy</a>
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
           <a href="/chatlog">ChatLog</a>
@@ -189,6 +190,46 @@
         if (btnResume) btnResume.disabled = !isPaused;
       }
 
+      function renderStrategySummary(status) {
+        const strategy = status?.strategy || {};
+        const activeId = String(strategy.id || '');
+        const target = document.getElementById('strategy-summary');
+        if (!target) return;
+        const runtimeMode = document.getElementById('ema-runtime-mode');
+        const trailingEl = document.getElementById('ema-runtime-trailing');
+        const riskEl = document.getElementById('ema-runtime-risk');
+        const isEma = activeId === 'EMA_RSI_15M_ETH_ONLY';
+        if (!isEma) {
+          target.innerHTML = 'Current active strategy is not EMA20/EMA50 RSI 15m. Select EMA strategy to view detailed buy/sell rules.';
+          if (runtimeMode) runtimeMode.textContent = '-';
+          if (trailingEl) trailingEl.textContent = '-';
+          if (riskEl) riskEl.textContent = '-';
+          return;
+        }
+
+        target.innerHTML = [
+          'Buy signal: EMA20 crosses above EMA50 on a closed 15m candle, RSI is in 50-70 band, volume > 0, and close > EMA50.',
+          'No repaint: strategy only evaluates closed 15m candles and ignores unfinished candle.',
+          'Sell signal #1: exit full position when EMA20 crosses below EMA50 on a closed 15m candle.',
+          'Sell signal #2: stop loss at 1R and take profit at 2R.',
+          'Sell signal #3: trailing stop activates after unrealized PnL reaches >= 1R, then exits if drawdown from peak reaches >= 1R.',
+          'Position policy: one LONG position per symbol for EMA strategy.',
+        ].map((line) => `<div>- ${line}</div>`).join('');
+
+        const emaRuntime = strategy.ema_runtime || null;
+        if (runtimeMode) runtimeMode.textContent = strategy.risk_mode || 'R_MULTIPLE_TRAILING';
+        if (!emaRuntime) {
+          if (trailingEl) trailingEl.textContent = 'No open EMA strategy position';
+          if (riskEl) riskEl.textContent = '-';
+          return;
+        }
+        const trailingOn = Boolean(emaRuntime.trailing_active);
+        const riskR = Number(emaRuntime.risk_r || 0);
+        const peakPnl = Number(emaRuntime.peak_pnl || 0);
+        if (trailingEl) trailingEl.textContent = trailingOn ? 'ACTIVE' : 'WAITING >= 1R';
+        if (riskEl) riskEl.textContent = `R ${money(riskR)} BOKS | Peak ${money(peakPnl)} BOKS`;
+      }
+
       async function refreshPositions() {
         const [data, status] = await Promise.all([fetchJson('/api/open-positions'), fetchJson('/api/status')]);
         const strategy = data.strategy_position || null;
@@ -198,6 +239,7 @@
         const strategyState = status.strategy_state || 'running';
         document.getElementById('strategy-state').textContent = `Strategy state: ${strategyState} | ${status?.strategy?.name || '-'}`;
         syncStrategyButtons(strategyState);
+        renderStrategySummary(status);
         renderTable(
           document.getElementById('positions-strategy'),
           ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'Margin', 'Size', 'uPnL', 'Opened'],
@@ -452,5 +494,6 @@
       setInterval(refreshSettings, 15000);
       setInterval(refreshStrategies, 30000);
     </script>
+    <script src="/static/theme.js"></script>
   </body>
 </html>

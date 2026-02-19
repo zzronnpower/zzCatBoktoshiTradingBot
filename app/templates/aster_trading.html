@@ -8,30 +8,30 @@
     <style>
       .aster-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; }
       .aster-inner { display: grid; grid-template-columns: repeat(2, minmax(260px, 1fr)); gap: 16px; }
-      .acct-panel { background: linear-gradient(180deg, #111418 0%, #12161d 100%); border: 1px solid #2f333b; border-radius: 12px; padding: 16px; }
+      .acct-panel { background: linear-gradient(180deg, var(--panel) 0%, var(--panel-soft) 100%); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
       .acct-actions { display: flex; gap: 8px; margin: 10px 0 14px; }
-      .acct-btn { flex: 1; border: 1px solid #3a404c; background: #1b1f28; color: #dfc18b; border-radius: 8px; padding: 10px; font-weight: 700; }
+      .acct-btn { flex: 1; border: 1px solid var(--line); background: var(--input-bg); color: var(--accent); border-radius: 8px; padding: 10px; font-weight: 700; }
       .acct-section-title { font-size: 26px; margin: 0; }
-      .acct-subtitle { color: #b6c0cd; margin: 10px 0; font-size: 20px; }
+      .acct-subtitle { color: var(--muted); margin: 10px 0; font-size: 20px; }
       .acct-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px dashed rgba(255,255,255,.08); }
-      .acct-row span { color: #9ea9b7; }
-      .acct-row strong { color: #e7eef8; }
-      .trade-panel { background: linear-gradient(180deg, #111418 0%, #111822 100%); border: 1px solid #2f333b; border-radius: 12px; padding: 16px; }
-      .trade-tabs { display: flex; gap: 16px; border-bottom: 1px solid #2f333b; padding-bottom: 10px; margin-bottom: 14px; }
-      .trade-tabs button { background: transparent; border: 0; color: #96a2b2; font-size: 28px; cursor: pointer; }
-      .trade-tabs button.active { color: #ffffff; font-weight: 700; }
+      .acct-row span { color: var(--muted); }
+      .acct-row strong { color: var(--text); }
+      .trade-panel { background: linear-gradient(180deg, var(--panel) 0%, var(--panel-soft) 100%); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
+      .trade-tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 14px; }
+      .trade-tabs button { background: transparent; border: 0; color: var(--muted); font-size: 28px; cursor: pointer; }
+      .trade-tabs button.active { color: var(--text); font-weight: 700; }
       .trade-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
       .trade-field { display: flex; flex-direction: column; gap: 6px; }
-      .trade-field label { font-size: 12px; color: #9ea9b7; text-transform: uppercase; }
-      .trade-field input, .trade-field select { background: #1e232c; color: #edf3fb; border: 1px solid #3a404c; border-radius: 8px; padding: 10px; font-size: 14px; }
-      .trade-toggle { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: #d3dceb; }
+      .trade-field label { font-size: 12px; color: var(--muted); text-transform: uppercase; }
+      .trade-field input, .trade-field select { background: var(--input-bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 14px; }
+      .trade-toggle { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: var(--text); }
       .trade-quick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
-      .trade-quick div { border: 1px solid #333a48; border-radius: 8px; padding: 8px; background: #191d26; }
-      .trade-quick span { display: block; color: #9ea9b7; font-size: 11px; text-transform: uppercase; }
+      .trade-quick div { border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--input-bg); }
+      .trade-quick span { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; }
       .trade-quick strong { font-size: 15px; }
       .aster-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
-      .btn-long { background: linear-gradient(180deg, #6fc4be 0%, #56aba5 100%); color: #0f1a1f; border: 0; border-radius: 8px; padding: 12px; font-weight: 700; cursor: pointer; }
-      .btn-close-aster { background: linear-gradient(180deg, #f29c62 0%, #d47434 100%); color: #27150a; border: 0; border-radius: 8px; padding: 12px; font-weight: 700; cursor: pointer; }
+      .btn-long { background: linear-gradient(180deg, var(--accent) 0%, #56aba5 100%); color: var(--button-text); border: 0; border-radius: 8px; padding: 12px; font-weight: 700; cursor: pointer; }
+      .btn-close-aster { background: linear-gradient(180deg, #f29c62 0%, #d47434 100%); color: var(--button-text); border: 0; border-radius: 8px; padding: 12px; font-weight: 700; cursor: pointer; }
       .mono-box { border: 1px solid var(--line); border-radius: 10px; background: rgba(0,0,0,.18); padding: 10px; max-height: 240px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
       @media (max-width: 1100px) {
         .aster-grid { grid-template-columns: 1fr; }
@@ -327,5 +327,6 @@
       setInterval(() => refreshAccount().catch(() => {}), 6000);
       setInterval(() => refreshTables().catch(() => {}), 6000);
     </script>
+    <script src="/static/theme.js"></script>
   </body>
 </html>

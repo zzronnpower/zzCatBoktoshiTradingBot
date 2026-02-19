@@ -1,7 +1,7 @@
 services:
   mtc-bot:
     build: .
-    container_name: mtc-bot
+    container_name: CatBoktoshiTradingBot
     env_file:
       - BoktoshiBotModule/.env
       - AsterTradingModule/.env

@@ -8,7 +8,7 @@ from .hyperliquid_client import HyperliquidClient
 from .mtc_client import MTCClient, MTCClientError
 from .risk import build_long_sl_tp_prices, parse_total_capital
 from .storage import add_equity_snapshot, add_log, add_signal, add_trade, get_kv, set_kv
-from .strategy import evaluate_long_ema_rsi_15m, evaluate_long_ma50_cross_3_candles
+from .strategy import evaluate_exit_ema_cross_down_15m, evaluate_long_ema_rsi_15m, evaluate_long_ma50_cross_3_candles
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -30,6 +30,7 @@ class BotRunner:
     MANUAL_MAX_POSITIONS = 3
     STRATEGY_MA50 = "MA50_4H_CROSSUP_3C_LONG_ONLY"
     STRATEGY_EMA_RSI = "EMA_RSI_15M_ETH_ONLY"
+    EMA_STATE_KEY = "ema_strategy_state"
 
     def __init__(
         self,
@@ -416,6 +417,133 @@ class BotRunner:
                 return True
         return False
 
+    def _has_any_open_long_on_coin(self, positions: List[Dict[str, Any]], coin: str) -> bool:
+        target_coin = self._normalize_coin(coin)
+        for pos in positions:
+            if str(pos.get("side", "")).upper() != "LONG":
+                continue
+            if str(pos.get("coin", "")).upper() == target_coin:
+                return True
+        return False
+
+    def _get_ema_state(self) -> Dict[str, Any]:
+        raw = get_kv(self.db_path, self.EMA_STATE_KEY, "")
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+            return parsed if isinstance(parsed, dict) else {}
+        except Exception:
+            return {}
+
+    def _set_ema_state(self, state: Dict[str, Any]) -> None:
+        set_kv(self.db_path, self.EMA_STATE_KEY, json.dumps(state))
+
+    def _clear_ema_state(self) -> None:
+        set_kv(self.db_path, self.EMA_STATE_KEY, "")
+
+    def _ensure_ema_state(self, now: int, position: Dict[str, Any], account: Dict[str, Any]) -> Dict[str, Any]:
+        position_id = str(position.get("positionId", ""))
+        pnl = float(position.get("unrealizedPnl", 0) or 0)
+        state = self._get_ema_state()
+        if str(state.get("position_id", "")) == position_id and position_id:
+            return state
+
+        capital = parse_total_capital(account)
+        risk_r = max(abs(capital * self.sl_capital_pct), 1e-9)
+        created = {
+            "position_id": position_id,
+            "risk_r": risk_r,
+            "trailing_active": pnl >= risk_r,
+            "peak_pnl": pnl,
+        }
+        self._set_ema_state(created)
+        add_log(self.db_path, now, "INFO", f"Initialized EMA strategy state for {position_id}: R={risk_r:.6f}")
+        return created
+
+    def _get_closed_ema_candles(self) -> List[Dict[str, Any]]:
+        candles = self.hyperliquid.get_candles(self.trade_coin, interval="15m", bars=300)
+        if len(candles) >= 2:
+            maybe_open = _to_float(candles[-1].get("close_time", 0), 0.0)
+            if maybe_open > int(time.time() * 1000):
+                candles = candles[:-1]
+        return candles
+
+    def _manage_ema_strategy_position(
+        self,
+        now: int,
+        account: Dict[str, Any],
+        position: Dict[str, Any],
+    ) -> None:
+        position_id = str(position.get("positionId", ""))
+        if not position_id:
+            return
+
+        state = self._ensure_ema_state(now, position, account)
+        risk_r = max(_to_float(state.get("risk_r"), 0.0), 1e-9)
+        pnl = float(position.get("unrealizedPnl", 0) or 0)
+        peak_pnl = max(_to_float(state.get("peak_pnl"), pnl), pnl)
+        trailing_active = bool(state.get("trailing_active", False))
+
+        if peak_pnl != _to_float(state.get("peak_pnl"), pnl):
+            state["peak_pnl"] = peak_pnl
+            self._set_ema_state(state)
+
+        if not trailing_active and pnl >= risk_r:
+            trailing_active = True
+            state["trailing_active"] = True
+            state["peak_pnl"] = peak_pnl
+            self._set_ema_state(state)
+            add_log(self.db_path, now, "INFO", f"EMA trailing activated for {position_id} at >= 1R.")
+
+        try:
+            exit_signal = evaluate_exit_ema_cross_down_15m(self._get_closed_ema_candles())
+            if exit_signal.get("signal"):
+                self._close_position(
+                    now,
+                    position_id,
+                    "EMA20 crossed below EMA50 on closed 15m candle",
+                    comment="EMA strategy exit: cross down on closed 15m candle.",
+                    owner="strategy",
+                )
+                self._clear_ema_state()
+                return
+        except Exception as exc:
+            add_log(self.db_path, now, "ERROR", f"EMA exit signal evaluation failed: {exc}")
+
+        if pnl <= -risk_r:
+            self._close_position(
+                now,
+                position_id,
+                f"EMA strategy SL 1R hit ({pnl:.4f} BOKS)",
+                comment="EMA strategy exit: stop loss 1R.",
+                owner="strategy",
+            )
+            self._clear_ema_state()
+            return
+
+        if pnl >= (2 * risk_r):
+            self._close_position(
+                now,
+                position_id,
+                f"EMA strategy TP 2R hit ({pnl:.4f} BOKS)",
+                comment="EMA strategy exit: take profit 2R.",
+                owner="strategy",
+            )
+            self._clear_ema_state()
+            return
+
+        if trailing_active and (peak_pnl - pnl) >= risk_r:
+            self._close_position(
+                now,
+                position_id,
+                f"EMA trailing stop hit: drawdown {peak_pnl - pnl:.4f} >= 1R from peak",
+                comment="EMA strategy exit: trailing stop after 1R activation.",
+                owner="strategy",
+            )
+            self._clear_ema_state()
+            return
+
     def _extract_position_id_from_open_response(self, response: Dict[str, Any]) -> str:
         if not isinstance(response, dict):
             return ""
@@ -524,13 +652,19 @@ class BotRunner:
         }
 
     def _manage_open_positions(self, now: int, account: Dict[str, Any], positions: List[Dict[str, Any]]) -> None:
-        capital = parse_total_capital(account)
-        if capital <= 0:
-            return
-
         strategy_id = self._get_owner_position_id("strategy")
         strategy_pos = self._find_position_by_id(positions, strategy_id)
         if not strategy_pos:
+            if self.active_strategy == self.STRATEGY_EMA_RSI:
+                self._clear_ema_state()
+            return
+
+        if self.active_strategy == self.STRATEGY_EMA_RSI:
+            self._manage_ema_strategy_position(now, account, strategy_pos)
+            return
+
+        capital = parse_total_capital(account)
+        if capital <= 0:
             return
 
         sl_target = -abs(capital * self.sl_capital_pct)
@@ -833,6 +967,9 @@ class BotRunner:
         if self._owner_has_open_position("strategy", positions):
             add_log(self.db_path, now, "INFO", f"Strategy position already open for {self.trade_coin}. No new entry.")
             return
+        if self.active_strategy == self.STRATEGY_EMA_RSI and self._has_any_open_long_on_coin(positions, self.trade_coin):
+            add_log(self.db_path, now, "INFO", f"Open LONG already exists on {self.trade_coin}. EMA strategy keeps one position per symbol.")
+            return
         if len(positions) >= self.max_positions:
             add_log(self.db_path, now, "WARN", "Max positions reached. Skip entry.")
             return
@@ -887,8 +1024,12 @@ class BotRunner:
             margin=self.margin_boks,
             leverage=self.leverage,
             sl_capital_pct=self.sl_capital_pct,
-            tp_capital_pct=self.tp_capital_pct,
+            tp_capital_pct=(self.sl_capital_pct * 2) if self.active_strategy == self.STRATEGY_EMA_RSI else self.tp_capital_pct,
         )
+
+        comment = "MA50(4H) cross-up confirmed by 3 closes. Long setup."
+        if self.active_strategy == self.STRATEGY_EMA_RSI:
+            comment = "EMA20>EMA50 with RSI 50-70 on closed 15m candle. Long setup."
 
         payload = {
             "coin": self.trade_coin,
@@ -897,7 +1038,7 @@ class BotRunner:
             "leverage": self.leverage,
             "stopLoss": round(risk_targets["stop_loss"], 6),
             "takeProfit": round(risk_targets["take_profit"], 6),
-            "comment": "MA50(4H) cross-up confirmed by 3 closes. Long setup.",
+            "comment": comment,
         }
 
         if self.dry_run:
@@ -934,6 +1075,12 @@ class BotRunner:
                 json.dumps(response),
             )
             self._capture_owner_position_id("strategy", now, positions, response)
+            if self.active_strategy == self.STRATEGY_EMA_RSI:
+                latest_positions = self._fetch_positions(now)
+                strategy_position_id = self._get_owner_position_id("strategy")
+                strategy_position = self._find_position_by_id(latest_positions, strategy_position_id)
+                if strategy_position:
+                    self._ensure_ema_state(now, strategy_position, account)
             set_kv(self.db_path, signal_key, candle_key)
             add_log(self.db_path, now, "INFO", f"Opened strategy long on {self.trade_coin}.")
         except MTCClientError as exc:

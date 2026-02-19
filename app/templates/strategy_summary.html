@@ -1,0 +1,160 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Tóm tắt Strategy - zzCatBoktoshiTradingBot</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <h1>Tóm tắt Strategy</h1>
+        <p>Theo dõi nhanh mô tả strategy đang chạy và các thông tin vận hành theo thời gian thực.</p>
+        <div class="nav-links">
+          <a href="/">Dashboard</a>
+          <a href="/manual">Manual Trade</a>
+          <a href="/strategy-summary" class="active">Tóm tắt Strategy</a>
+          <a href="/aster-chart">ASTER Chart</a>
+          <a href="/aster-trading">AsterTrading</a>
+          <a href="/chatlog">ChatLog</a>
+        </div>
+      </header>
+
+      <section class="grid">
+        <div class="card strategy-summary-card">
+          <div class="strategy-summary-head">
+            <h2 id="strategy-title">Strategy Summary</h2>
+            <span id="strategy-state-chip" class="strategy-chip">Đang tải...</span>
+          </div>
+          <p id="strategy-subtitle" class="muted">Đang tải mô tả strategy...</p>
+
+          <div class="kv-list" style="margin-top: 12px;">
+            <div class="kv-row"><span id="meta-label-1">Thông tin 1</span><strong id="meta-value-1">-</strong></div>
+            <div class="kv-row"><span id="meta-label-2">Thông tin 2</span><strong id="meta-value-2">-</strong></div>
+            <div class="kv-row"><span id="meta-label-3">Thông tin 3</span><strong id="meta-value-3">-</strong></div>
+          </div>
+
+          <div id="strategy-summary" class="strategy-summary-content" style="margin-top: 14px;">Đang tải...</div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      async function fetchJson(path, options = {}) {
+        const res = await fetch(path, options);
+        let data;
+        const text = await res.text();
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (e) {
+          data = { detail: text || `HTTP ${res.status}` };
+        }
+        if (!res.ok) {
+          throw new Error(data?.detail || `${res.status} ${path}`);
+        }
+        return data;
+      }
+
+      const STRATEGY_MA50 = 'MA50_4H_CROSSUP_3C_LONG_ONLY';
+      const STRATEGY_EMA = 'EMA_RSI_15M_ETH_ONLY';
+
+      function setMetaRows(rows) {
+        const defaults = [
+          { label: 'Thông tin 1', value: '-' },
+          { label: 'Thông tin 2', value: '-' },
+          { label: 'Thông tin 3', value: '-' },
+        ];
+        const finalRows = Array.isArray(rows) && rows.length ? rows : defaults;
+        for (let i = 0; i < 3; i += 1) {
+          const row = finalRows[i] || defaults[i];
+          const labelEl = document.getElementById(`meta-label-${i + 1}`);
+          const valueEl = document.getElementById(`meta-value-${i + 1}`);
+          if (labelEl) labelEl.textContent = row.label;
+          if (valueEl) valueEl.textContent = row.value;
+        }
+      }
+
+      function renderStrategySummary(status) {
+        const strategy = status?.strategy || {};
+        const activeId = String(strategy.id || '');
+        const summaryEl = document.getElementById('strategy-summary');
+        const chip = document.getElementById('strategy-state-chip');
+        const titleEl = document.getElementById('strategy-title');
+        const subtitleEl = document.getElementById('strategy-subtitle');
+
+        chip.className = `strategy-chip ${status?.strategy_state === 'paused' ? 'paused' : 'running'}`;
+        chip.textContent = `${status?.strategy_state === 'paused' ? 'Tạm dừng' : 'Đang chạy'} | ${strategy?.name || '-'}`;
+
+        if (activeId === STRATEGY_MA50) {
+          if (titleEl) titleEl.textContent = 'Strategy Name: MA50 4H CrossUp 3 Candles (ETH Only)';
+          if (subtitleEl) {
+            subtitleEl.textContent = 'Chiến lược trend-following cho ETH trên khung 4H, xác nhận xu hướng bằng 3 nến liên tiếp đóng trên MA50.';
+          }
+          setMetaRows([
+            { label: 'Tài sản áp dụng', value: 'ETH only' },
+            { label: 'Khung thời gian', value: '4H' },
+            { label: 'Mẫu xác nhận', value: 'CrossUp MA50 + 3 nến đóng trên MA50' },
+          ]);
+          summaryEl.innerHTML = [
+            '<b>Mô tả chiến lược:</b> Đây là chiến lược giao dịch theo xu hướng (trend-following) dành riêng cho ETH trên khung thời gian 4 giờ (4H), dựa trên tín hiệu xác nhận khi giá cắt lên đường trung bình động MA50 và duy trì phía trên trong 3 cây nến liên tiếp.',
+            '<b>Ý tưởng cốt lõi:</b> Khi giá ETH đóng cửa phía trên MA50 trên khung 4H trong 3 nến liên tiếp, điều đó cho thấy thị trường không chỉ break ngắn hạn mà đã có sự chấp nhận trên vùng giá cao hơn, giảm xác suất fake breakout và tăng khả năng hình thành xu hướng tăng ngắn-trung hạn.',
+            '<b>Điều kiện vào lệnh (Entry):</b> Chỉ áp dụng cho ETH (ETH/USDT hoặc ETH/USD), khung thời gian 4H, giá cắt lên MA50 (Close > MA50), có 3 cây nến 4H liên tiếp đóng trên MA50. Vào lệnh Buy tại nến thứ 3 đóng cửa (entry an toàn) hoặc retest MA50 (entry tối ưu R/R).',
+            '<b>Logic thị trường phía sau:</b> MA50 4H đại diện cho xu hướng trung hạn; 1 nến cross có thể chỉ là fake breakout; 3 nến giữ trên MA50 cho thấy lực mua ổn định + dòng tiền chấp nhận giá cao hơn; giảm nhiễu từ stop hunt và intrabar fake move.',
+            '<b>Điều kiện tránh vào lệnh (Filter):</b> MA50 đang dốc xuống mạnh; volume suy yếu trong 3 nến xác nhận; giá đã quá xa MA50 (>3-5%) nên dễ pullback; thị trường sideway chặt (chop zone).',
+            '<b>Stop Loss:</b> Dưới đáy gần nhất của 3 nến xác nhận hoặc dưới MA50 một khoảng an toàn (1-2%).',
+            '<b>Take Profit (tùy phong cách):</b> TP1 tại vùng kháng cự gần nhất; TP2 theo RR 2:1 hoặc 3:1; hoặc trailing theo MA20/structure để bắt trend dài.',
+            '<b>Ưu điểm:</b> Lọc fake breakout tốt hơn so với chỉ 1 nến cross; tín hiệu rõ ràng, dễ backtest; phù hợp với market có trend (đặc biệt ETH khi có momentum).',
+            '<b>Nhược điểm:</b> Vào lệnh trễ hơn so với cross đầu tiên; RR thấp hơn nếu giá đã chạy xa sau 3 nến; kém hiệu quả trong thị trường sideway (whipsaw quanh MA50).',
+            '<b>Phù hợp với:</b> Trader theo xu hướng (swing/intraday 4H), người ưu tiên xác suất cao hơn entry sớm, hệ thống kết hợp confirmation thay vì anticipation.',
+            '<b>Tư duy vận hành:</b> Chiến lược này không bắt đáy hay breakout sớm, mà tập trung vào sự chấp nhận xu hướng (trend acceptance). Thay vì đoán giá sẽ tăng, nó chờ thị trường chứng minh phe mua đã kiểm soát cấu trúc trên MA50 trong ít nhất 12 giờ (3 nến 4H), từ đó giao dịch theo dòng tiền thay vì dự đoán.'
+          ].map((line) => `<div class="summary-line">${line}</div>`).join('');
+          return;
+        }
+
+        if (activeId === STRATEGY_EMA) {
+          const emaRuntime = strategy.ema_runtime || null;
+          if (titleEl) titleEl.textContent = 'Strategy Name: EMA20/50 + RSI filter 15m (ETH only)';
+          if (subtitleEl) {
+            subtitleEl.textContent = 'Chiến lược EMA20/EMA50 + RSI trên nến 15m đã đóng, có trailing theo R để bảo toàn lợi nhuận.';
+          }
+          setMetaRows([
+            { label: 'Risk mode', value: strategy.risk_mode || 'R_MULTIPLE_TRAILING' },
+            { label: 'Trạng thái trailing', value: emaRuntime ? (emaRuntime.trailing_active ? 'ĐANG BẬT' : 'CHỜ >= 1R') : 'Chưa có vị thế EMA đang mở' },
+            { label: 'R / Peak uPnL', value: emaRuntime ? `R ${Number(emaRuntime.risk_r || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} BOKS | Peak ${Number(emaRuntime.peak_pnl || 0).toLocaleString('en-US', { maximumFractionDigits: 2 })} BOKS` : '-' },
+          ]);
+          summaryEl.innerHTML = [
+            '<b>Tín hiệu mua:</b> EMA20 cắt lên EMA50 trên nến 15m đã đóng, RSI nằm trong vùng 50-70, volume > 0 và giá đóng cửa nằm trên EMA50.',
+            '<b>Không repaint:</b> Strategy chỉ đánh giá nến 15m đã đóng, bỏ qua nến chưa kết thúc.',
+            '<b>Tín hiệu bán #1:</b> Thoát toàn bộ vị thế khi EMA20 cắt xuống EMA50 trên nến 15m đã đóng.',
+            '<b>Tín hiệu bán #2:</b> Đặt Stop Loss tại 1R và Take Profit tại 2R.',
+            '<b>Tín hiệu bán #3:</b> Trailing stop bắt đầu khi uPnL đạt >= 1R, sau đó thoát nếu drawdown từ đỉnh đạt >= 1R.',
+            '<b>Chốt lời Bot Long:</b> Bot sẽ chốt lời khi một trong các điều kiện xảy ra: TP theo RR đạt 1.5R-2R, hoặc RSI chạm ngưỡng 70, hoặc EMA cross down (điểm thoát cuối cùng nếu chưa chốt).',
+            '<b>Tối ưu giữ lãi:</b> Bot thường thêm trailing stop sau khi đã lời một mức nhất định để vừa khóa lãi vừa còn cơ hội ăn trend.',
+            '<b>Quản lý vị thế:</b> Mỗi symbol chỉ giữ tối đa 1 vị thế LONG cho strategy EMA.'
+          ].map((line) => `<div class="summary-line">${line}</div>`).join('');
+          return;
+        }
+
+        if (titleEl) titleEl.textContent = `Strategy Name: ${strategy?.name || 'Không xác định'}`;
+        if (subtitleEl) subtitleEl.textContent = 'Chưa có nội dung tóm tắt cho strategy này.';
+        setMetaRows();
+        summaryEl.innerHTML = '<div class="summary-note">Chưa có mô tả chi tiết cho strategy hiện tại. Hãy cập nhật mapping trong trang Strategy Summary.</div>';
+      }
+
+      async function refreshSummary() {
+        try {
+          const status = await fetchJson('/api/status');
+          renderStrategySummary(status);
+        } catch (e) {
+          const summaryEl = document.getElementById('strategy-summary');
+          if (summaryEl) summaryEl.innerHTML = `<div class="summary-note">Không tải được dữ liệu: ${String(e)}</div>`;
+        }
+      }
+
+      refreshSummary();
+      setInterval(refreshSummary, 5000);
+    </script>
+    <script src="/static/theme.js"></script>
+  </body>
+</html>

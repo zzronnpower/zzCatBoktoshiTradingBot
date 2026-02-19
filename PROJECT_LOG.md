@@ -1,6 +1,6 @@
 # PROJECT_LOG
 
-Last updated: 2026-02-19 (manual pause/resume button state sync)
+Last updated: 2026-02-19 (ASTER websocket fallback + overlay tests)
 Project: `zzCatBoktoshiTradingBot`
 
 ## 1) Project Intent
@@ -43,6 +43,16 @@ Build a deployable ETHUSDT trading bot with:
 - Exit:
   - SL target: -1% of total capital
   - TP target: +3% of total capital
+
+EMA strategy override (latest):
+
+- Entry remains: EMA20 cross above EMA50 with RSI in 50-70 on closed 15m candle.
+- Position management now uses R-multiple model:
+  - `SL = 1R`
+  - `TP = 2R`
+  - Trailing stop activates after `>= 1R` profit and exits on `>= 1R` drawdown from peak PnL.
+- Hard exit on closed-candle `EMA20 cross down EMA50`.
+- One position per symbol enforced for EMA strategy (no duplicate LONG on same coin).
 
 Important (latest):
 
@@ -288,6 +298,141 @@ Important (latest):
   - When strategy is `paused`: `Pause` is disabled (gray), `Resume` is enabled.
 - Added `syncStrategyButtons()` in `app/templates/manual.html` and wired it to live status refresh.
 
+### M25 - UI theme system (Default + Pinky)
+
+- Added global theme engine with user-selectable themes:
+  - `Default` (current dark look)
+  - `Pinky` (beige/pink retro palette)
+- Added shared script `app/static/theme.js`:
+  - injects a floating theme selector (`Theme: Default | Pinky`)
+  - persists user preference in `localStorage`
+  - emits `themechange` event for dynamic components
+- Extended `app/static/app.css` with theme tokens and `[data-theme="pinky"]` overrides.
+- Updated UI pages to include theme script:
+  - `app/templates/index.html`
+  - `app/templates/manual.html`
+  - `app/templates/eth_chart.html`
+  - `app/templates/aster_trading.html`
+  - `app/templates/chatlog.html`
+- Updated ASTER chart/trading styling to consume theme variables and avoid hardcoded dark-only colors.
+- Chart canvas colors now react to theme switch via `themechange` listener.
+
+### M26 - Theme apply hotfix (Pinky not visually switching)
+
+- Added robust Pinky selector support in CSS:
+  - `html[data-theme="pinky"]`
+  - `body.theme-pinky`
+- Updated `theme.js` to also toggle `body.theme-pinky` for compatibility.
+- Added fallback initialization for cases where script loads after `DOMContentLoaded`.
+
+### M27 - Add third theme: Light Green
+
+- Added new global theme variant `Light Green` to theme engine.
+- Updated `app/static/theme.js`:
+  - supported theme ids: `default`, `pinky`, `light-green`
+  - theme selector now includes `Light Green`
+  - generalized body class sync to `theme-*` class pattern
+- Updated `app/static/app.css` with `light-green` token palette:
+  - sage/olive light background
+  - green-muted text/line/accent
+  - chart/input/button color tokens tuned for readability
+
+### M28 - ChatLog readability on Pinky/Light Green
+
+- Improved text contrast in `app/templates/chatlog.html` for light themes.
+- Chat bubble message text is now brighter on `Pinky` and `Light Green`.
+- Sender label (`User`/`Assistant`) color also adjusted for readability.
+
+### M29 - Docker container name rename
+
+- Updated Docker Compose container name from `mtc-bot` to `CatBoktoshiTradingBot`.
+- Service key remains `mtc-bot`; runtime container display name now matches project naming.
+
+### M30 - Strategy overlay API + ASTER chart MA50/Entry/SL/TP visuals
+
+- Added strategy overlay API endpoint:
+  - `GET /api/strategy/overlay`
+- Overlay data source is Hyperliquid candles (strategy-consistent source), ETHUSDT-only.
+- API now returns:
+  - MA50 line points (`ma50`)
+  - historical MA50 cross-up entry markers (`entry_markers`)
+  - live strategy-position levels (`entry_price`, `stop_loss`, `take_profit`) when open
+- Updated `ASTER Chart` UI (`app/templates/eth_chart.html`):
+  - MA50 overlay line on chart
+  - entry markers on candles
+  - live Entry/SL/TP price lines when strategy position is open
+  - overlay status note that explains ETH-only + 4H requirement
+
+### M31 - Regression tests for owner mapping and pause/resume/manual close flows
+
+- Added test suite `tests/test_bot_runner_flows.py` covering:
+  - stale owner ID cleanup in position reconciliation
+  - pause/resume status sync to KV (`bot_status`, `strategy_state`)
+  - manual close guard (reject strategy-owned position id)
+  - close-by-selected manual position and ID list update behavior
+- Tests focus on core runtime safety paths for mixed owner model (strategy + manual).
+
+### M32 - EMA strategy risk model upgrade (2R TP + trailing + EMA cross-down exit)
+
+- Updated `EMA_RSI_15M_ETH_ONLY` runtime behavior in `BoktoshiBotModule/bot_runner.py`:
+  - `takeProfit` at open is now set to `2R` (where `R = capital * SL_CAPITAL_PCT`).
+  - trailing stop mode is activated after unrealized PnL reaches `>= 1R`.
+  - trailing stop exits when drawdown from peak unrealized PnL reaches `>= 1R`.
+  - immediate full exit when `EMA20` crosses below `EMA50` on closed 15m candle.
+- Added EMA exit signal evaluator in `BoktoshiBotModule/strategy.py`:
+  - `evaluate_exit_ema_cross_down_15m(...)`
+- Added one-position-per-symbol guard for EMA strategy to prevent duplicate longs on the same coin.
+- Extended `/api/status` strategy metadata with EMA-specific risk mode fields:
+  - `risk_mode`, `tp_r_multiple`, `trailing_activation_r`
+- Expanded tests in `tests/test_bot_runner_flows.py`:
+  - trailing activation and trailing-stop exit behavior
+  - EMA cross-down forced exit path
+  - one-position-per-symbol guard path
+
+### M33 - Manual tab: EMA runtime status + buy/sell signal summary
+
+- Updated `GET /api/status` in `app/main.py` to include EMA runtime state payload under:
+  - `strategy.ema_runtime`
+  - sourced from KV key `ema_strategy_state`
+- Updated `/manual` page (`app/templates/manual.html`) with:
+  - EMA runtime block showing risk mode, trailing status, and `R / peak uPnL`
+  - strategy behavior summary section describing buy/sell conditions in plain language
+- Manual summary now explicitly documents:
+  - BUY: EMA20 cross above EMA50 + RSI 50-70 on closed 15m candle
+  - no repaint (closed-candle-only evaluation)
+  - SELL: EMA20 cross down exit, SL 1R, TP 2R, trailing stop after 1R activation
+  - one-position-per-symbol policy
+
+### M34 - Dropdown readability fix (all themes)
+
+- Updated global select/dropdown color tokens in `app/static/app.css`.
+- All dropdown controls now use green background palette with high-contrast text to avoid white-on-white option text.
+- Applied consistently for:
+  - normal select controls (`.kv-row select`, `.card select`)
+  - chart symbol dropdown option palette via shared tokens
+  - floating theme selector (`.theme-dock select`)
+
+### M35 - Manual summary panel prominence + stronger dropdown CSS fallback
+
+- Moved EMA runtime + strategy summary from inside `Strategy Control` card into a dedicated visible card:
+  - `Strategy Summary (EMA)` in `app/templates/manual.html`
+- This makes the buy/sell explanation and live runtime state easier to locate at first glance.
+- Strengthened dropdown styling fallback in `app/static/app.css`:
+  - added `!important` on select/option color rules
+  - added `-webkit-text-fill-color` and `color-scheme: dark`
+- Goal: improve compatibility where native dropdown popup ignored normal CSS and stayed white.
+
+### M36 - Docker dev hot-reload profile
+
+- Added new development compose override file: `docker-compose.dev.yml`.
+- Keeps existing production-like `docker-compose.yml` unchanged.
+- Dev profile now mounts source folders into container for live code sync:
+  - `./app -> /app/app`
+  - `./BoktoshiBotModule -> /app/BoktoshiBotModule`
+  - `./AsterTradingModule -> /app/AsterTradingModule`
+- Dev profile runs Uvicorn with auto-reload and explicit reload directories.
+- Added `WATCHFILES_FORCE_POLLING=true` in dev profile to improve file-change detection in Docker/WSL environments.
+
 ## 6) Current Endpoints (Operational)
 
 Core:
@@ -307,6 +452,7 @@ Manual controls:
 - `POST /api/manual/close-strategy-position`
 - `POST /api/bot/pause`
 - `POST /api/bot/resume`
+- `GET /api/strategy/overlay`
 
 ASTER chart data:
 
@@ -401,3 +547,73 @@ When a new assistant session starts:
    - check `/api/status`
    - visit `/manual`, `/aster-chart`, and `/aster-trading`
 4. Continue from section "Suggested Next Steps" unless user gives new direction.
+
+## 12) Latest Update (2026-02-19)
+
+- Moved `Strategy Summary (EMA)` out of `app/templates/manual.html` into a dedicated page/tab: `app/templates/strategy_summary.html`.
+- Added new route `GET /strategy-summary` in `app/main.py` and top nav link `Tóm tắt Strategy` on Manual + Strategy Summary pages.
+- Translated strategy summary content to Vietnamese and added a more visual card style (status chip, highlighted rule rows) in `app/static/app.css`.
+
+## 13) Latest Update (2026-02-19)
+
+- Fixed Vietnamese diacritics on `/strategy-summary` so all UI labels and strategy rules display proper accented text.
+- Updated runtime/status/error strings in `app/templates/strategy_summary.html` (for example: `Đang tải`, `Tạm dừng`, `Không tải được dữ liệu`).
+
+## 14) Latest Update (2026-02-19)
+
+- Rewrote Strategy Summary content to focus on `MA50 4H CrossUp 3 Candles (ETH Only)` with full Vietnamese description sections (idea, entry, filters, SL/TP, pros/cons, fit, operation mindset).
+- Updated `app/templates/strategy_summary.html` header and quick-info block to reflect MA50 4H strategy context.
+- Added runtime note behavior: if active strategy is not MA50, page still shows MA50 strategy documentation and displays a notice.
+
+## 15) Latest Update (2026-02-19)
+
+- Fixed regression on `/strategy-summary`: content now switches correctly by active strategy ID from `/api/status`.
+- Added dual rendering branches in `app/templates/strategy_summary.html`:
+  - `MA50_4H_CROSSUP_3C_LONG_ONLY` -> full MA50 4H Vietnamese summary.
+  - `EMA_RSI_15M_ETH_ONLY` -> EMA/RSI 15m summary + runtime trailing/R metrics.
+- Replaced hardcoded MA50-only header/meta with dynamic title/subtitle/meta rows so UI follows current strategy.
+
+## 16) Latest Update (2026-02-19)
+
+- Updated EMA strategy summary content on `/strategy-summary` to include additional long take-profit logic:
+  - take profit when RR reaches 1.5R-2R, or RSI reaches 70, or EMA cross down as final exit.
+  - clarified trailing-stop usage to lock profits while still allowing trend continuation.
+
+## 17) Latest Update (2026-02-19)
+
+- Added dev-only Docker compose override `docker-compose.dev.yml` for hot reload without changing production-like compose.
+- Dev override now mounts source folders (`app/`, `BoktoshiBotModule/`, `AsterTradingModule/`) into container.
+- Dev override runs Uvicorn with `--reload` and explicit `--reload-dir` values.
+- Added `WATCHFILES_FORCE_POLLING=true` in dev override to improve file change detection on Docker Desktop + WSL.
+
+## 18) Latest Update (2026-02-19)
+
+- Fixed ASTER Chart strategy overlay mismatch when active strategy is `EMA_RSI_15M_ETH_ONLY`.
+- Updated `/api/strategy/overlay` in `app/main.py` to be strategy-aware:
+  - MA50 strategy returns MA50 line + MA50 x3 entry markers on required timeframe `4h`.
+  - EMA strategy returns EMA20/EMA50 lines + EMA/RSI entry markers on required timeframe `15m`.
+  - Endpoint now returns `required_interval` and disables overlay when current chart timeframe does not match strategy timeframe.
+- Added indicator helpers in `BoktoshiBotModule/strategy.py`:
+  - `build_ema_series(...)`
+  - `detect_ema_rsi_long_markers(...)`
+- Updated chart UI in `app/templates/eth_chart.html`:
+  - supports dynamic overlay lines (MA50 vs EMA20/EMA50)
+  - requests overlay by current timeframe and shows clear hint when timeframe mismatch occurs.
+
+## 19) Latest Update (2026-02-19)
+
+- Added ASTER market websocket integration to chart page (`app/templates/eth_chart.html`):
+  - combined stream connection to `wss://fstream.asterdex.com/stream` for:
+    - `<symbol>@depth10@100ms`
+    - `<symbol>@markPrice@1s`
+  - live websocket orderbook rendering with auto-reconnect and exponential backoff.
+- Added resilient REST fallback behavior for orderbook:
+  - if websocket disconnects or has no fresh updates, REST depth polling remains active.
+  - orderbook status now clearly indicates websocket vs REST source.
+- Added browser cleanup hook to close websocket on page unload.
+- Added regression test file `tests/test_strategy_overlay.py` to validate overlay behavior:
+  - EMA strategy requires `15m` and returns EMA lines.
+  - MA50 strategy requires `4h` and returns MA50 line.
+- Verification notes:
+  - `python3 -m compileall app BoktoshiBotModule tests` passed.
+  - `pytest` is not installed in current local environment (`No module named pytest`).

@@ -1,0 +1,17 @@
+services:
+  mtc-bot:
+    build: .
+    container_name: CatBoktoshiTradingBot-dev
+    env_file:
+      - BoktoshiBotModule/.env
+      - AsterTradingModule/.env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./app:/app/app
+      - ./BoktoshiBotModule:/app/BoktoshiBotModule
+      - ./AsterTradingModule:/app/AsterTradingModule
+      - ./data:/app/data
+    environment:
+      - WATCHFILES_FORCE_POLLING=true
+    command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --reload-dir /app/BoktoshiBotModule --reload-dir /app/AsterTradingModule

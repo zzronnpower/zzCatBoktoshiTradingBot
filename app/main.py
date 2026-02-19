@@ -147,6 +147,9 @@ def aster_chart_page(request: Request) -> HTMLResponse:
 def status() -> Dict[str, Any]:
     kv = get_all_kv(DB_PATH)
     runtime_settings = runner.get_runtime_settings()
+    active_strategy = runner.get_active_strategy()
+    strategy_map = {item["id"]: item for item in runner.list_strategies()}
+    strategy_info = strategy_map.get(active_strategy, strategy_map.get(runner.STRATEGY_MA50, {}))
     return {
         "bot_status": kv.get("bot_status", "unknown"),
         "strategy_state": "paused" if runner.is_strategy_paused() else "running",
@@ -156,8 +159,9 @@ def status() -> Dict[str, Any]:
         "trade_pair": TRADE_COIN,
         "trade_coin": runner.trade_coin,
         "strategy": {
-            "name": "MA50_4H_CROSSUP_3C_LONG_ONLY",
-            "entry": "Price cross above MA50 and closes above MA50 for 3 consecutive 4H candles",
+            "id": active_strategy,
+            "name": strategy_info.get("label", active_strategy),
+            "entry": strategy_info.get("entry", ""),
             "short_enabled": False,
             "margin_boks": runtime_settings["margin_boks"],
             "leverage": runtime_settings["leverage"],
@@ -268,6 +272,24 @@ def update_bot_settings(payload: Dict[str, Any] = Body(default={})) -> Dict[str,
             "sl_percent": updated["sl_capital_pct"] * 100,
             "tp_percent": updated["tp_capital_pct"] * 100,
         },
+    }
+
+
+@app.get("/api/strategies")
+def list_strategies() -> Dict[str, Any]:
+    return {"active": runner.get_active_strategy(), "items": runner.list_strategies()}
+
+
+@app.post("/api/strategy/select")
+def select_strategy(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:  # type: ignore[valid-type]
+    strategy_id = str(payload.get("strategy_id", "") or "")
+    result = runner.set_active_strategy(strategy_id)
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=str(result.get("message", "Invalid strategy")))
+    return {
+        "success": True,
+        "active": runner.get_active_strategy(),
+        "items": runner.list_strategies(),
     }
 
 

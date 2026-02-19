@@ -8,7 +8,7 @@ from .hyperliquid_client import HyperliquidClient
 from .mtc_client import MTCClient, MTCClientError
 from .risk import build_long_sl_tp_prices, parse_total_capital
 from .storage import add_equity_snapshot, add_log, add_signal, add_trade, get_kv, set_kv
-from .strategy import evaluate_long_ma50_cross_3_candles
+from .strategy import evaluate_long_ema_rsi_15m, evaluate_long_ma50_cross_3_candles
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -28,6 +28,8 @@ def _to_int(value: Any, default: int = 0) -> int:
 class BotRunner:
     MANUAL_ALLOWED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "HYPEUSDT", "PUMPUSDT", "DOGEUSDT"]
     MANUAL_MAX_POSITIONS = 3
+    STRATEGY_MA50 = "MA50_4H_CROSSUP_3C_LONG_ONLY"
+    STRATEGY_EMA_RSI = "EMA_RSI_15M_ETH_ONLY"
 
     def __init__(
         self,
@@ -67,6 +69,7 @@ class BotRunner:
         self._trade_lock = threading.Lock()
         self._state_lock = threading.Lock()
         self._strategy_paused = False
+        self.active_strategy = self.STRATEGY_MA50
 
     def get_runtime_settings(self) -> Dict[str, float]:
         with self._state_lock:
@@ -76,6 +79,33 @@ class BotRunner:
                 "sl_capital_pct": float(self.sl_capital_pct),
                 "tp_capital_pct": float(self.tp_capital_pct),
             }
+
+    def get_active_strategy(self) -> str:
+        return self.active_strategy
+
+    def list_strategies(self) -> List[Dict[str, str]]:
+        return [
+            {
+                "id": self.STRATEGY_MA50,
+                "label": "MA50 4H CrossUp 3 Candles (ETH only)",
+                "entry": "Price crosses above MA50 then closes above MA50 for 3 consecutive 4H candles.",
+            },
+            {
+                "id": self.STRATEGY_EMA_RSI,
+                "label": "EMA20/50 + RSI filter 15m (ETH only)",
+                "entry": "EMA20 cross above EMA50 with RSI in 50-70 band on closed 15m candle.",
+            },
+        ]
+
+    def set_active_strategy(self, strategy_id: str) -> Dict[str, Any]:
+        selected = str(strategy_id or "").strip().upper()
+        valid_ids = {item["id"] for item in self.list_strategies()}
+        if selected not in valid_ids:
+            return {"success": False, "message": f"Unsupported strategy: {strategy_id}"}
+        self.active_strategy = selected
+        set_kv(self.db_path, "active_strategy", selected)
+        add_log(self.db_path, int(time.time()), "INFO", f"Active strategy set to {selected}.")
+        return {"success": True, "strategy_id": selected}
 
     def apply_runtime_settings(self, payload: Dict[str, Any]) -> Dict[str, float]:
         margin_boks = max(_to_float(payload.get("margin_boks"), self.margin_boks), 1.0)
@@ -112,6 +142,9 @@ class BotRunner:
             self.leverage = max(leverage, 1.0)
             self.sl_capital_pct = max(sl_capital_pct, 0.0001)
             self.tp_capital_pct = max(tp_capital_pct, 0.0)
+        selected = get_kv(self.db_path, "active_strategy", self.STRATEGY_MA50).upper().strip()
+        valid_ids = {item["id"] for item in self.list_strategies()}
+        self.active_strategy = selected if selected in valid_ids else self.STRATEGY_MA50
         return self.get_runtime_settings()
 
     @staticmethod
@@ -804,14 +837,29 @@ class BotRunner:
             add_log(self.db_path, now, "WARN", "Max positions reached. Skip entry.")
             return
 
+        signal = {}
+        signal_timeframe = "4h"
+        signal_key = "last_entry_candle"
         try:
-            candles = self.hyperliquid.get_candles(self.trade_coin, interval="4h", bars=90)
+            if self.active_strategy == self.STRATEGY_EMA_RSI:
+                candles = self.hyperliquid.get_candles(self.trade_coin, interval="15m", bars=300)
+                if len(candles) >= 2:
+                    maybe_open = _to_float(candles[-1].get("close_time", 0), 0.0)
+                    if maybe_open > (now * 1000):
+                        candles = candles[:-1]
+                signal = evaluate_long_ema_rsi_15m(candles)
+                signal_timeframe = "15m"
+                signal_key = "last_entry_candle_ema_rsi"
+            else:
+                candles = self.hyperliquid.get_candles(self.trade_coin, interval="4h", bars=90)
+                signal = evaluate_long_ma50_cross_3_candles(candles)
+                signal_timeframe = "4h"
+                signal_key = "last_entry_candle"
         except Exception as exc:
             add_log(self.db_path, now, "ERROR", f"Hyperliquid candles fetch failed: {exc}")
             return
 
-        signal = evaluate_long_ma50_cross_3_candles(candles)
-        add_signal(self.db_path, now, self.trade_coin, "4h", bool(signal.get("signal")), json.dumps(signal))
+        add_signal(self.db_path, now, self.trade_coin, signal_timeframe, bool(signal.get("signal")), json.dumps(signal))
         set_kv(self.db_path, "last_signal", json.dumps(signal))
 
         if not signal.get("signal"):
@@ -819,7 +867,7 @@ class BotRunner:
             return
 
         candle_key = str(int(_to_float(signal.get("last_candle_open_time", 0), 0.0)))
-        if get_kv(self.db_path, "last_entry_candle", "") == candle_key:
+        if get_kv(self.db_path, signal_key, "") == candle_key:
             add_log(self.db_path, now, "INFO", "Signal already traded for this candle.")
             return
 
@@ -865,7 +913,7 @@ class BotRunner:
                 "DRY_RUN",
                 json.dumps(payload),
             )
-            set_kv(self.db_path, "last_entry_candle", candle_key)
+            set_kv(self.db_path, signal_key, candle_key)
             return
 
         if not self._can_send_trade(now):
@@ -886,7 +934,7 @@ class BotRunner:
                 json.dumps(response),
             )
             self._capture_owner_position_id("strategy", now, positions, response)
-            set_kv(self.db_path, "last_entry_candle", candle_key)
+            set_kv(self.db_path, signal_key, candle_key)
             add_log(self.db_path, now, "INFO", f"Opened strategy long on {self.trade_coin}.")
         except MTCClientError as exc:
             add_trade(

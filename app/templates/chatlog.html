@@ -526,6 +526,24 @@ Và đã cập nhật `docker-compose.yml` để load cả 2 file env này.</pre
 - Cột đầu của Strategy Position và Manual Position đổi từ `Position ID` thành `Coin`.
 - Giá trị hiển thị coin thực tế của lệnh mở.
 - Dropdown close position vẫn giữ Position ID để đóng đúng lệnh.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>đọc EMA-RSI Strategy.md và đánh giá khả năng implement strategy riêng + chọn strategy từ dropdown apply. Chốt làm Phase 1 ETH-only trước.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai Phase 1:
+- Thêm strategy mới `EMA_RSI_15M_ETH_ONLY` (EMA20/50 cross + RSI band 50-70 trên nến 15m đã đóng).
+- Giữ strategy cũ `MA50_4H_CROSSUP_3C_LONG_ONLY`.
+- Thêm registry + active strategy trong bot runner, lưu KV `active_strategy` và load lại sau restart.
+- Thêm API chọn strategy: `GET /api/strategies`, `POST /api/strategy/select`.
+- Manual tab có dropdown strategy + nút `Apply Strategy` để đổi strategy runtime.
+- `/api/status` trả strategy đang active (id/name/entry).
+- Scope vẫn ETH-only như yêu cầu Phase 1.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>lỗi khi Save Bot Settings: SyntaxError Unexpected token 'I', "Internal Server Error" is not valid JSON.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã fix:
+- Sửa backend `/api/bot/settings` (app/main.py) để luôn return JSON đúng schema, không còn 500 ResponseValidationError.
+- Sửa `fetchJson` ở manual page để parse fallback text khi response không phải JSON.
+- Đã verify lại: POST `/api/bot/settings` trả HTTP 200 + JSON hợp lệ.</pre></div>
           </div>
         </div>
       </section>

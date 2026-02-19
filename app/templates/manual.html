@@ -23,7 +23,15 @@
       <section class="grid manual-grid">
         <div class="card">
           <h2>Strategy Control</h2>
-          <p class="muted">Pause only the auto strategy engine. Manual open/close still works.</p>
+          <p class="muted">Pause/resume strategy engine and switch active strategy profile.</p>
+          <div class="kv-list" style="margin-top:10px;">
+            <div class="kv-row">
+              <span>Active Strategy</span>
+              <select id="strategy-select" style="max-width:300px;"></select>
+            </div>
+            <div class="kv-row"><span>Strategy Note</span><strong id="strategy-entry-note">Loading...</strong></div>
+          </div>
+          <button id="btn-apply-strategy" class="btn btn-primary" style="margin-top:10px;">Apply Strategy</button>
           <div class="btn-row">
             <button id="btn-pause" class="btn btn-warning">Pause Running Bot</button>
             <button id="btn-resume" class="btn btn-primary">Resume Bot</button>
@@ -134,7 +142,17 @@
 
       async function fetchJson(path, options = {}) {
         const res = await fetch(path, options);
-        return res.json();
+        let data;
+        const text = await res.text();
+        try {
+          data = text ? JSON.parse(text) : {};
+        } catch (e) {
+          data = { detail: text || `HTTP ${res.status}` };
+        }
+        if (!res.ok) {
+          throw new Error(data?.detail || `${res.status} ${path}`);
+        }
+        return data;
       }
 
       function renderTable(el, columns, rows) {
@@ -169,7 +187,7 @@
         const manualPositions = Array.isArray(data.manual_positions) && data.manual_positions.length
           ? data.manual_positions
           : (data.manual_position ? [data.manual_position] : []);
-        document.getElementById('strategy-state').textContent = `Strategy state: ${status.strategy_state || 'running'}`;
+        document.getElementById('strategy-state').textContent = `Strategy state: ${status.strategy_state || 'running'} | ${status?.strategy?.name || '-'}`;
         renderTable(
           document.getElementById('positions-strategy'),
           ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'Margin', 'Size', 'uPnL', 'Opened'],
@@ -234,6 +252,47 @@
               return `<option value="${pid}">${pid} | ${coin} | entry ${entry} | margin ${margin}</option>`;
             })
             .join('');
+        }
+      }
+
+      async function refreshStrategies() {
+        const data = await fetchJson('/api/strategies');
+        const items = Array.isArray(data.items) ? data.items : [];
+        const active = (data.active || '').toUpperCase();
+        const selector = document.getElementById('strategy-select');
+        selector.innerHTML = items
+          .map((s) => `<option value="${s.id}">${s.label}</option>`)
+          .join('');
+        if (items.some((s) => s.id === active)) {
+          selector.value = active;
+        }
+        const picked = items.find((s) => s.id === selector.value);
+        document.getElementById('strategy-entry-note').textContent = picked?.entry || '-';
+        selector.onchange = () => {
+          const current = items.find((s) => s.id === selector.value);
+          document.getElementById('strategy-entry-note').textContent = current?.entry || '-';
+        };
+      }
+
+      async function applyStrategy() {
+        const btn = document.getElementById('btn-apply-strategy');
+        btn.disabled = true;
+        btn.textContent = 'Applying...';
+        try {
+          const strategyId = document.getElementById('strategy-select').value || '';
+          const data = await fetchJson('/api/strategy/select', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ strategy_id: strategyId }),
+          });
+          renderResult({ success: true, message: `Strategy applied: ${data.active}` }, false);
+          await refreshStrategies();
+          await refreshPositions();
+        } catch (e) {
+          renderResult({ success: false, message: String(e) }, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Apply Strategy';
         }
       }
 
@@ -374,11 +433,14 @@
       document.getElementById('btn-pause').addEventListener('click', pauseStrategy);
       document.getElementById('btn-resume').addEventListener('click', resumeStrategy);
       document.getElementById('btn-save-settings').addEventListener('click', saveSettings);
+      document.getElementById('btn-apply-strategy').addEventListener('click', applyStrategy);
 
       refreshPositions();
       refreshSettings();
+      refreshStrategies();
       setInterval(refreshPositions, 5000);
       setInterval(refreshSettings, 15000);
+      setInterval(refreshStrategies, 30000);
     </script>
   </body>
 </html>

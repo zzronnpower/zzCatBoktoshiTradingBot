@@ -1,6 +1,6 @@
 # PROJECT_LOG
 
-Last updated: 2026-02-19 (manual open positions coin column)
+Last updated: 2026-02-19 (manual save JSON error fix)
 Project: `zzCatBoktoshiTradingBot`
 
 ## 1) Project Intent
@@ -258,6 +258,28 @@ Important (latest):
 - In `/manual` `Current Open Positions`, replaced first column from `Position ID` to `Coin`.
 - Both `Strategy Position` and `Manual Position` tables now show trade coin name in first column.
 - Position ID remains available in the close-position dropdown for precise manual close selection.
+
+### M22 - Strategy selector and EMA-RSI (Phase 1, ETH only)
+
+- Added second strategy implementation in `BoktoshiBotModule/strategy.py`:
+  - `EMA_RSI_15M_ETH_ONLY`
+  - Entry condition: EMA20 cross above EMA50 with RSI band filter (50-70), closed 15m candle.
+- Added strategy registry and active strategy state to `BoktoshiBotModule/bot_runner.py`:
+  - `MA50_4H_CROSSUP_3C_LONG_ONLY`
+  - `EMA_RSI_15M_ETH_ONLY`
+- Active strategy is persisted in KV (`active_strategy`) and restored on startup.
+- Added strategy APIs:
+  - `GET /api/strategies`
+  - `POST /api/strategy/select`
+- Updated `/api/status` to expose active strategy id/name/entry.
+- Updated Manual page strategy control with strategy dropdown + `Apply Strategy` button.
+- Phase 1 scope keeps strategy trading pair ETH-only; BTC multi-symbol strategy scope deferred.
+
+### M23 - Manual bot settings save error fix
+
+- Fixed backend bug in `app/main.py` where `/api/bot/settings` response path was broken after strategy endpoint insertion, causing 500 `ResponseValidationError`.
+- Fixed frontend JSON parsing in `app/templates/manual.html` to safely handle non-JSON error bodies and show readable message.
+- Verified `POST /api/bot/settings` now returns valid JSON (HTTP 200).
 
 ## 6) Current Endpoints (Operational)
 

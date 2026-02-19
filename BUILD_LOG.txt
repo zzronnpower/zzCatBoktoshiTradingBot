@@ -1,0 +1,697 @@
+Build Log - Initial Scaffold
+Timestamp: 2026-02-19
+Project Root: /home/zzcatzz/zzCodeProject/zzCatBoktoshiTradingBot
+
+Created Files:
+- README.md
+- .env.example
+- Dockerfile
+- docker-compose.yml
+- requirements.txt
+- app/main.py
+- app/bot_runner.py
+- app/mtc_client.py
+- app/storage.py
+- app/templates/index.html
+- app/static/app.css
+
+README.md
+----------------------------------------
+# MTC Trading Bot (Local + Docker)
+
+This is a minimal Python bot scaffold for MechaTradeClub (Boktoshi) with a small web UI for status, logs, and trade history.
+
+## Quick Start (Docker)
+
+1) Copy env example:
+
+```bash
+cp .env.example .env
+```
+
+2) (Optional) Put your API key in `.env`.
+
+3) Build and run:
+
+```bash
+docker compose up --build
+```
+
+Open the dashboard at: http://localhost:8000
+
+## Local Run (No Docker)
+
+```bash
+python -m venv .venv
+source .venv/bin/activate
+pip install -r requirements.txt
+uvicorn app.main:app --host 0.0.0.0 --port 8000
+```
+
+## Notes
+
+- This project is a runnable scaffold only. Trading strategy is a stub.
+- Logs and history are stored in a local SQLite file.
+- If `MTC_API_KEY` is not set, the bot runs in a safe idle mode.
+
+.env.example
+----------------------------------------
+MTC_API_KEY=
+MTC_BASE_URL=https://boktoshi.com/api/v1
+BOT_NAME=LocalBot
+BOT_DESC=Local trading bot scaffold
+DB_PATH=/app/data/bot.db
+POLL_SECONDS=10
+DRY_RUN=true
+
+Dockerfile
+----------------------------------------
+FROM python:3.11-slim
+
+ENV PYTHONDONTWRITEBYTECODE=1
+ENV PYTHONUNBUFFERED=1
+
+WORKDIR /app
+
+COPY requirements.txt /app/requirements.txt
+RUN pip install --no-cache-dir -r /app/requirements.txt
+
+COPY app /app/app
+COPY README.md /app/README.md
+
+ENV DB_PATH=/app/data/bot.db
+
+EXPOSE 8000
+
+CMD ["uvicorn", "app.main:app", "--host", "0.0.0.0", "--port", "8000"]
+
+docker-compose.yml
+----------------------------------------
+services:
+  mtc-bot:
+    build: .
+    container_name: mtc-bot
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data
+
+requirements.txt
+----------------------------------------
+fastapi==0.111.0
+uvicorn[standard]==0.30.1
+jinja2==3.1.4
+requests==2.32.3
+
+app/main.py
+----------------------------------------
+import json
+import os
+from typing import Any, Dict
+
+from fastapi import FastAPI
+from fastapi.responses import HTMLResponse
+from fastapi.staticfiles import StaticFiles
+from fastapi.templating import Jinja2Templates
+from starlette.requests import Request
+
+from .bot_runner import BotRunner
+from .storage import init_db, get_logs, get_trades, get_all_kv
+
+
+def _env_bool(value: str, default: bool) -> bool:
+    if value is None:
+        return default
+    return value.strip().lower() in {"1", "true", "yes", "on"}
+
+
+DB_PATH = os.getenv("DB_PATH", "/app/data/bot.db")
+MTC_API_KEY = os.getenv("MTC_API_KEY", "")
+MTC_BASE_URL = os.getenv("MTC_BASE_URL", "https://boktoshi.com/api/v1")
+BOT_NAME = os.getenv("BOT_NAME", "LocalBot")
+BOT_DESC = os.getenv("BOT_DESC", "Local trading bot scaffold")
+POLL_SECONDS = int(os.getenv("POLL_SECONDS", "10"))
+DRY_RUN = _env_bool(os.getenv("DRY_RUN", "true"), True)
+
+app = FastAPI(title="MTC Local Bot")
+templates = Jinja2Templates(directory="app/templates")
+app.mount("/static", StaticFiles(directory="app/static"), name="static")
+
+runner = BotRunner(
+    db_path=DB_PATH,
+    base_url=MTC_BASE_URL,
+    api_key=MTC_API_KEY,
+    poll_seconds=POLL_SECONDS,
+    dry_run=DRY_RUN,
+    bot_name=BOT_NAME,
+    bot_desc=BOT_DESC,
+)
+
+
+@app.on_event("startup")
+def on_startup() -> None:
+    os.makedirs(os.path.dirname(DB_PATH), exist_ok=True)
+    init_db(DB_PATH)
+    runner.start()
+
+
+@app.on_event("shutdown")
+def on_shutdown() -> None:
+    runner.stop()
+
+
+@app.get("/", response_class=HTMLResponse)
+def index(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("index.html", {"request": request})
+
+
+def _parse_json(value: str) -> Any:
+    if not value:
+        return None
+    try:
+        return json.loads(value)
+    except Exception:
+        return value
+
+
+@app.get("/api/status")
+def status() -> Dict[str, Any]:
+    kv = get_all_kv(DB_PATH)
+    return {
+        "bot_status": kv.get("bot_status", "unknown"),
+        "last_tick": kv.get("last_tick", ""),
+        "account_ok": kv.get("account_ok", ""),
+        "account": _parse_json(kv.get("account", "")),
+        "positions": _parse_json(kv.get("positions", "")),
+        "dry_run": DRY_RUN,
+    }
+
+
+@app.get("/api/logs")
+def logs() -> Dict[str, Any]:
+    return {"items": get_logs(DB_PATH, limit=200)}
+
+
+@app.get("/api/history")
+def history() -> Dict[str, Any]:
+    return {"items": get_trades(DB_PATH, limit=200)}
+
+app/bot_runner.py
+----------------------------------------
+import json
+import threading
+import time
+from typing import Optional
+
+from .mtc_client import MTCClient
+from .storage import add_log, set_kv
+
+
+class BotRunner:
+    def __init__(
+        self,
+        db_path: str,
+        base_url: str,
+        api_key: Optional[str],
+        poll_seconds: int,
+        dry_run: bool,
+        bot_name: str,
+        bot_desc: str,
+    ) -> None:
+        self.db_path = db_path
+        self.client = MTCClient(base_url, api_key)
+        self.poll_seconds = poll_seconds
+        self.dry_run = dry_run
+        self.bot_name = bot_name
+        self.bot_desc = bot_desc
+        self._thread: Optional[threading.Thread] = None
+        self._stop = threading.Event()
+        self._warned_no_key = False
+
+    def start(self) -> None:
+        if self._thread and self._thread.is_alive():
+            return
+        self._stop.clear()
+        self._thread = threading.Thread(target=self._run_loop, daemon=True)
+        self._thread.start()
+
+    def stop(self) -> None:
+        self._stop.set()
+        if self._thread:
+            self._thread.join(timeout=2)
+
+    def _run_loop(self) -> None:
+        while not self._stop.is_set():
+            now = int(time.time())
+            set_kv(self.db_path, "bot_status", "running")
+            set_kv(self.db_path, "last_tick", str(now))
+            if not self.client.api_key:
+                if not self._warned_no_key:
+                    add_log(
+                        self.db_path,
+                        now,
+                        "WARN",
+                        "MTC_API_KEY missing; bot idle mode.",
+                    )
+                    self._warned_no_key = True
+                time.sleep(self.poll_seconds)
+                continue
+
+            try:
+                account = self.client.get_account()
+                set_kv(self.db_path, "account", json.dumps(account))
+                set_kv(self.db_path, "account_ok", "true")
+            except Exception as exc:
+                set_kv(self.db_path, "account_ok", "false")
+                add_log(self.db_path, now, "ERROR", f"Account fetch failed: {exc}")
+
+            try:
+                positions = self.client.get_positions()
+                set_kv(self.db_path, "positions", json.dumps(positions))
+            except Exception as exc:
+                add_log(self.db_path, now, "ERROR", f"Positions fetch failed: {exc}")
+
+            if self.dry_run:
+                add_log(self.db_path, now, "INFO", "Dry run tick. No trades executed.")
+
+            time.sleep(self.poll_seconds)
+
+app/mtc_client.py
+----------------------------------------
+from typing import Any, Dict, Optional
+import requests
+
+
+class MTCClient:
+    def __init__(self, base_url: str, api_key: Optional[str]) -> None:
+        self.base_url = base_url.rstrip("/")
+        self.api_key = api_key
+
+    def _headers(self) -> Dict[str, str]:
+        if not self.api_key:
+            return {}
+        return {"Authorization": f"Bearer {self.api_key}"}
+
+    def register_bot(
+        self, name: str, description: str, sponsor_token: str = "", referral_code: str = ""
+    ) -> Dict[str, Any]:
+        payload = {
+            "name": name,
+            "description": description,
+        }
+        if sponsor_token:
+            payload["sponsorToken"] = sponsor_token
+        if referral_code:
+            payload["referralCode"] = referral_code
+        resp = requests.post(
+            f"{self.base_url}/bots/register",
+            json=payload,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_account(self) -> Dict[str, Any]:
+        resp = requests.get(
+            f"{self.base_url}/account",
+            headers=self._headers(),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_markets(self) -> Dict[str, Any]:
+        resp = requests.get(
+            f"{self.base_url}/markets",
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_positions(self) -> Dict[str, Any]:
+        resp = requests.get(
+            f"{self.base_url}/positions",
+            headers=self._headers(),
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def get_history(self, limit: int = 50, offset: int = 0) -> Dict[str, Any]:
+        resp = requests.get(
+            f"{self.base_url}/history",
+            headers=self._headers(),
+            params={"limit": limit, "offset": offset},
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def open_trade(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        resp = requests.post(
+            f"{self.base_url}/trade/open",
+            headers=self._headers(),
+            json=payload,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+    def close_trade(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        resp = requests.post(
+            f"{self.base_url}/trade/close",
+            headers=self._headers(),
+            json=payload,
+            timeout=15,
+        )
+        resp.raise_for_status()
+        return resp.json()
+
+app/storage.py
+----------------------------------------
+import sqlite3
+from typing import Any, Dict, List
+
+
+def init_db(db_path: str) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS logs (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts INTEGER NOT NULL,
+                level TEXT NOT NULL,
+                message TEXT NOT NULL
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS trades (
+                id INTEGER PRIMARY KEY AUTOINCREMENT,
+                ts INTEGER NOT NULL,
+                action TEXT NOT NULL,
+                coin TEXT,
+                side TEXT,
+                margin REAL,
+                leverage REAL,
+                status TEXT,
+                notes TEXT
+            )
+            """
+        )
+        cur.execute(
+            """
+            CREATE TABLE IF NOT EXISTS kv (
+                key TEXT PRIMARY KEY,
+                value TEXT NOT NULL
+            )
+            """
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def add_log(db_path: str, ts: int, level: str, message: str) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO logs (ts, level, message) VALUES (?, ?, ?)",
+            (ts, level, message),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_logs(db_path: str, limit: int = 100) -> List[Dict[str, Any]]:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "SELECT ts, level, message FROM logs ORDER BY id DESC LIMIT ?",
+            (limit,),
+        )
+        rows = cur.fetchall()
+        return [
+            {"ts": row[0], "level": row[1], "message": row[2]} for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+def add_trade(
+    db_path: str,
+    ts: int,
+    action: str,
+    coin: str,
+    side: str,
+    margin: float,
+    leverage: float,
+    status: str,
+    notes: str,
+) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            INSERT INTO trades (ts, action, coin, side, margin, leverage, status, notes)
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (ts, action, coin, side, margin, leverage, status, notes),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_trades(db_path: str, limit: int = 100) -> List[Dict[str, Any]]:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            """
+            SELECT ts, action, coin, side, margin, leverage, status, notes
+            FROM trades ORDER BY id DESC LIMIT ?
+            """,
+            (limit,),
+        )
+        rows = cur.fetchall()
+        return [
+            {
+                "ts": row[0],
+                "action": row[1],
+                "coin": row[2],
+                "side": row[3],
+                "margin": row[4],
+                "leverage": row[5],
+                "status": row[6],
+                "notes": row[7],
+            }
+            for row in rows
+        ]
+    finally:
+        conn.close()
+
+
+def set_kv(db_path: str, key: str, value: str) -> None:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute(
+            "INSERT INTO kv (key, value) VALUES (?, ?) ON CONFLICT(key) DO UPDATE SET value=excluded.value",
+            (key, value),
+        )
+        conn.commit()
+    finally:
+        conn.close()
+
+
+def get_kv(db_path: str, key: str, default: str = "") -> str:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT value FROM kv WHERE key=?", (key,))
+        row = cur.fetchone()
+        return row[0] if row else default
+    finally:
+        conn.close()
+
+
+def get_all_kv(db_path: str) -> Dict[str, str]:
+    conn = sqlite3.connect(db_path)
+    try:
+        cur = conn.cursor()
+        cur.execute("SELECT key, value FROM kv")
+        rows = cur.fetchall()
+        return {row[0]: row[1] for row in rows}
+    finally:
+        conn.close()
+
+app/templates/index.html
+----------------------------------------
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>MTC Local Bot</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <h1>MTC Local Bot</h1>
+        <p>Live status, logs, and trade history.</p>
+      </header>
+
+      <section class="grid">
+        <div class="card">
+          <h2>Status</h2>
+          <div id="status" class="mono">Loading...</div>
+        </div>
+
+        <div class="card">
+          <h2>Open Positions</h2>
+          <pre id="positions" class="mono">Loading...</pre>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <h2>Logs</h2>
+          <pre id="logs" class="mono">Loading...</pre>
+        </div>
+
+        <div class="card">
+          <h2>Trade History</h2>
+          <pre id="history" class="mono">Loading...</pre>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const formatJson = (obj) => JSON.stringify(obj, null, 2);
+
+      async function refresh() {
+        const statusRes = await fetch('/api/status');
+        const logsRes = await fetch('/api/logs');
+        const historyRes = await fetch('/api/history');
+
+        const status = await statusRes.json();
+        const logs = await logsRes.json();
+        const history = await historyRes.json();
+
+        document.getElementById('status').textContent = formatJson(status);
+        document.getElementById('positions').textContent = formatJson(status.positions || []);
+        document.getElementById('logs').textContent = formatJson(logs.items || []);
+        document.getElementById('history').textContent = formatJson(history.items || []);
+      }
+
+      refresh();
+      setInterval(refresh, 5000);
+    </script>
+  </body>
+</html>
+
+app/static/app.css
+----------------------------------------
+:root {
+  --bg: #0f141b;
+  --panel: #161f2b;
+  --muted: #9fb0c2;
+  --text: #e7edf5;
+  --accent: #6fd3a8;
+}
+
+* {
+  box-sizing: border-box;
+}
+
+body {
+  margin: 0;
+  font-family: "Segoe UI", "Helvetica Neue", Arial, sans-serif;
+  background: linear-gradient(160deg, #0c1117 0%, #101826 100%);
+  color: var(--text);
+}
+
+.page {
+  max-width: 1200px;
+  margin: 0 auto;
+  padding: 32px 20px 64px;
+}
+
+.header h1 {
+  margin: 0 0 6px;
+  font-size: 28px;
+}
+
+.header p {
+  margin: 0 0 24px;
+  color: var(--muted);
+}
+
+.grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fit, minmax(280px, 1fr));
+  gap: 16px;
+  margin-bottom: 16px;
+}
+
+.card {
+  background: var(--panel);
+  border: 1px solid #1f2a39;
+  border-radius: 12px;
+  padding: 16px;
+  min-height: 220px;
+  box-shadow: 0 10px 30px rgba(0, 0, 0, 0.25);
+}
+
+.card h2 {
+  margin: 0 0 12px;
+  font-size: 16px;
+  color: var(--accent);
+  letter-spacing: 0.3px;
+  text-transform: uppercase;
+}
+
+.mono {
+  font-family: "SFMono-Regular", "Consolas", "Liberation Mono", monospace;
+  font-size: 12px;
+  white-space: pre-wrap;
+  word-break: break-word;
+  color: var(--text);
+}
+
+pre {
+  margin: 0;
+}
+
+----------------------------------------
+Update: 2026-02-19
+- Project directory renamed from mtc_bot to zzCatBoktoshiTradingBot.
+- Log reviewed and project context understood:
+  - FastAPI dashboard with /api/status, /api/logs, /api/history.
+  - Background BotRunner loop polls account/positions and writes SQLite logs.
+  - DRY_RUN and missing API key keep bot in safe idle mode.
+
+----------------------------------------
+Update: 2026-02-19 (Dual Position Owner Split)
+- Trading position model changed from single ETH LONG to owner-split dual positions:
+  - 1 strategy-owned ETHUSDT LONG
+  - 1 manual-owned ETHUSDT LONG
+- Added owner position tracking keys in runtime kv store and stale-id reconciliation.
+- Strategy auto risk management now applies only to strategy-owned position.
+- Manual close action now closes only manual-owned position.
+- Added manual endpoint to close strategy-owned position explicitly.
+- Dashboard Open Positions split into:
+  - Strategy Position
+  - Manual Position
+- Added TP Price column beside StopLoss in position tables.

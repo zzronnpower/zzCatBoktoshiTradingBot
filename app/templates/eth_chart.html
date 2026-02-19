@@ -1,0 +1,277 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>ETH Chart - zzCatBoktoshiTradingBot</title>
+    <link rel="stylesheet" href="/static/app.css" />
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+      .trading-shell { display: grid; grid-template-columns: 1fr 340px; gap: 12px; }
+      .top-ticker { display: grid; grid-template-columns: repeat(6, minmax(110px, 1fr)); gap: 8px; margin-bottom: 12px; }
+      .tk { border: 1px solid var(--line); border-radius: 10px; padding: 10px; background: linear-gradient(180deg,#162742,#101d33); }
+      .tk .k { display:block; color: var(--muted); font-size:11px; text-transform:uppercase; letter-spacing:.6px; margin-bottom:6px; }
+      .tk .v { font-size:18px; font-weight:700; }
+      .chart-card { min-height: 620px; }
+      .chart-toolbar { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; }
+      .tf-group { display:flex; gap:6px; flex-wrap:wrap; }
+      .tf-btn { border:1px solid var(--line); background:rgba(255,255,255,.04); color:var(--text); padding:6px 10px; border-radius:8px; cursor:pointer; }
+      .tf-btn.active { border-color: var(--accent); color: var(--accent); }
+      #chart { width:100%; height:520px; border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+      .book-card { min-height: 620px; }
+      .book-head, .book-row { display:grid; grid-template-columns: 1fr 1fr 1fr; gap:8px; padding:7px 8px; font-size:13px; }
+      .book-head { color: var(--muted); text-transform:uppercase; font-size:11px; border-bottom:1px solid var(--line); }
+      .book-wrap { border:1px solid var(--line); border-radius:10px; overflow:hidden; }
+      .book-row { position:relative; border-bottom:1px solid rgba(255,255,255,.04); }
+      .book-row:last-child { border-bottom:none; }
+      .book-row .heat { position:absolute; inset:0; opacity:.15; pointer-events:none; }
+      .book-row.ask .heat { background: linear-gradient(90deg, rgba(255,105,120,0) 0%, rgba(255,105,120,.8) 100%); }
+      .book-row.bid .heat { background: linear-gradient(90deg, rgba(98,220,164,0) 0%, rgba(98,220,164,.8) 100%); }
+      .ask-px { color:#ff9da8; }
+      .bid-px { color:#84e8b5; }
+      .spread { padding:8px; text-align:center; color:var(--muted); border-top:1px solid var(--line); border-bottom:1px solid var(--line); background:rgba(0,0,0,.2); }
+      .live-mini { color: var(--muted); font-size:12px; }
+      .mini-ok { color: #89e6a8; }
+      .mini-warn { color: #ffd88f; }
+      .mini-err { color: #ff9da8; }
+      @media (max-width: 1200px) { .trading-shell { grid-template-columns: 1fr; } }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <h1>ETH Chart (ASTER)</h1>
+        <p>Internal pro chart inspired by Hyperliquid layout.</p>
+        <div class="nav-links">
+          <a href="/">Dashboard</a>
+          <a href="/manual">Manual Trade</a>
+          <a href="/eth-chart" class="active">ETH Chart</a>
+          <a href="/chatlog">ChatLog</a>
+        </div>
+      </header>
+
+      <section class="top-ticker">
+        <div class="tk"><span class="k">Symbol</span><span class="v">ETHUSDT</span></div>
+        <div class="tk"><span class="k">Mark</span><span class="v" id="tk-mark">-</span></div>
+        <div class="tk"><span class="k">Index</span><span class="v" id="tk-index">-</span></div>
+        <div class="tk"><span class="k">24h Change</span><span class="v" id="tk-change">-</span></div>
+        <div class="tk"><span class="k">24h Volume</span><span class="v" id="tk-vol">-</span></div>
+        <div class="tk"><span class="k">OI / Funding</span><span class="v" id="tk-oi">-</span></div>
+      </section>
+
+      <section class="trading-shell">
+        <div class="card chart-card">
+          <div class="chart-toolbar">
+            <div class="tf-group" id="tf-group">
+              <button class="tf-btn" data-tf="1m">1m</button>
+              <button class="tf-btn active" data-tf="5m">5m</button>
+              <button class="tf-btn" data-tf="15m">15m</button>
+              <button class="tf-btn" data-tf="1h">1h</button>
+              <button class="tf-btn" data-tf="4h">4h</button>
+              <button class="tf-btn" data-tf="1d">1d</button>
+            </div>
+            <div class="live-mini" id="chart-status">Loading...</div>
+          </div>
+          <div id="chart"></div>
+        </div>
+
+        <div class="card book-card">
+          <h2>Order Book</h2>
+          <div class="live-mini" id="book-status">Connecting...</div>
+          <div class="book-wrap">
+            <div class="book-head"><span>Price</span><span>Size</span><span>Total</span></div>
+            <div id="asks"></div>
+            <div class="spread" id="spread">Spread: -</div>
+            <div id="bids"></div>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const symbol = 'ETHUSDT';
+      let timeframe = '5m';
+      let nextFundingTime = 0;
+      let chart;
+      let candleSeries;
+      let volumeSeries;
+      let inFlightKline = false;
+      let inFlightDepth = false;
+
+      const nf = (n, max = 2) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: max });
+      const money = (n) => nf(n, 2);
+      const pct = (n) => `${Number(n || 0).toFixed(3)}%`;
+      const fmtLarge = (n) => {
+        const v = Number(n || 0);
+        if (v >= 1_000_000_000) return `${(v / 1_000_000_000).toFixed(2)}B`;
+        if (v >= 1_000_000) return `${(v / 1_000_000).toFixed(2)}M`;
+        if (v >= 1_000) return `${(v / 1_000).toFixed(2)}K`;
+        return nf(v, 2);
+      };
+
+      async function fetchJson(path, timeoutMs = 5000) {
+        const ctrl = new AbortController();
+        const t = setTimeout(() => ctrl.abort(), timeoutMs);
+        const res = await fetch(path, { cache: 'no-store', signal: ctrl.signal });
+        clearTimeout(t);
+        if (!res.ok) throw new Error(`${path} failed: ${res.status}`);
+        return res.json();
+      }
+
+      function buildChart() {
+        const el = document.getElementById('chart');
+        chart = LightweightCharts.createChart(el, {
+          layout: { background: { type: 'solid', color: '#0d1627' }, textColor: '#c8d4e3' },
+          grid: { vertLines: { color: 'rgba(255,255,255,.06)' }, horzLines: { color: 'rgba(255,255,255,.06)' } },
+          rightPriceScale: { borderColor: 'rgba(255,255,255,.08)' },
+          timeScale: { borderColor: 'rgba(255,255,255,.08)', timeVisible: true, secondsVisible: false },
+          crosshair: { mode: 1 },
+        });
+        candleSeries = chart.addCandlestickSeries({
+          upColor: '#62dca4', downColor: '#ff6b7d', borderUpColor: '#62dca4', borderDownColor: '#ff6b7d', wickUpColor: '#62dca4', wickDownColor: '#ff6b7d',
+        });
+        volumeSeries = chart.addHistogramSeries({
+          color: '#3c7cf5',
+          priceFormat: { type: 'volume' },
+          priceScaleId: '',
+        });
+        volumeSeries.priceScale().applyOptions({
+          scaleMargins: { top: 0.82, bottom: 0 },
+        });
+        window.addEventListener('resize', () => {
+          chart.applyOptions({ width: el.clientWidth, height: 520 });
+        });
+      }
+
+      async function refreshOverview() {
+        const data = await fetchJson(`/api/aster/overview?symbol=${symbol}`);
+        document.getElementById('tk-mark').textContent = money(data.markPrice);
+        document.getElementById('tk-index').textContent = money(data.indexPrice);
+        const ch = Number(data.priceChangePercent || 0);
+        const changeEl = document.getElementById('tk-change');
+        changeEl.textContent = `${money(data.priceChange)} / ${pct(ch)}`;
+        changeEl.style.color = ch >= 0 ? '#89e6a8' : '#ff9da8';
+        document.getElementById('tk-vol').textContent = `${fmtLarge(data.quoteVolume)} USDT`;
+        document.getElementById('tk-oi').textContent = `${fmtLarge(data.openInterest)} / ${pct(Number(data.lastFundingRate || 0) * 100)}`;
+        nextFundingTime = Number(data.nextFundingTime || 0);
+      }
+
+      async function refreshKlines() {
+        if (inFlightKline) return;
+        inFlightKline = true;
+        document.getElementById('chart-status').textContent = `Loading ${timeframe} candles...`;
+        try {
+          const data = await fetchJson(`/api/aster/klines?symbol=${symbol}&interval=${timeframe}&limit=400`);
+          const items = data.items || [];
+          const candles = items.map((k) => ({
+            time: Math.floor(Number(k[0]) / 1000),
+            open: Number(k[1]),
+            high: Number(k[2]),
+            low: Number(k[3]),
+            close: Number(k[4]),
+          }));
+          const vols = items.map((k) => ({
+            time: Math.floor(Number(k[0]) / 1000),
+            value: Number(k[5]),
+            color: Number(k[4]) >= Number(k[1]) ? 'rgba(98,220,164,.45)' : 'rgba(255,107,125,.45)',
+          }));
+          candleSeries.setData(candles);
+          volumeSeries.setData(vols);
+          chart.timeScale().fitContent();
+          const status = document.getElementById('chart-status');
+          status.className = 'live-mini mini-ok';
+          status.textContent = `Live ${timeframe} - ${new Date().toLocaleTimeString()}`;
+        } catch (e) {
+          const status = document.getElementById('chart-status');
+          status.className = 'live-mini mini-warn';
+          status.textContent = `Kline delayed (${e})`;
+        } finally {
+          inFlightKline = false;
+        }
+      }
+
+      function renderSide(target, rows, side) {
+        const maxSz = Math.max(1, ...rows.map((r) => Number(r[1] || 0)));
+        let running = 0;
+        const html = rows
+          .map((r) => {
+            const px = Number(r[0]);
+            const sz = Number(r[1]);
+            running += sz;
+            const heat = Math.min(100, (sz / maxSz) * 100);
+            const cls = side === 'ask' ? 'ask-px' : 'bid-px';
+            return `<div class="book-row ${side}"><div class="heat" style="width:${heat}%"></div><span class="${cls}">${money(px)}</span><span>${nf(sz,4)}</span><span>${nf(running,4)}</span></div>`;
+          })
+          .join('');
+        target.innerHTML = html;
+      }
+
+      async function refreshDepth() {
+        if (inFlightDepth) return;
+        inFlightDepth = true;
+        try {
+          const data = await fetchJson(`/api/aster/depth?symbol=${symbol}&limit=10`);
+          const asks = (data.asks || []).slice(0, 10).reverse();
+          const bids = (data.bids || []).slice(0, 10);
+          renderSide(document.getElementById('asks'), asks, 'ask');
+          renderSide(document.getElementById('bids'), bids, 'bid');
+          const bestAsk = asks.length ? Number(asks[asks.length - 1][0]) : 0;
+          const bestBid = bids.length ? Number(bids[0][0]) : 0;
+          const spread = bestAsk > 0 && bestBid > 0 ? bestAsk - bestBid : 0;
+          document.getElementById('spread').textContent = `Spread: ${money(spread)} (${bestBid ? ((spread / bestBid) * 100).toFixed(4) : '0.0000'}%)`;
+          const s = document.getElementById('book-status');
+          s.className = 'live-mini mini-ok';
+          s.textContent = `Orderbook live - ${new Date().toLocaleTimeString()}`;
+        } catch (e) {
+          const s = document.getElementById('book-status');
+          s.className = 'live-mini mini-err';
+          s.textContent = `Orderbook unavailable (${e})`;
+        } finally {
+          inFlightDepth = false;
+        }
+      }
+
+      function startFundingCountdown() {
+        setInterval(() => {
+          if (!nextFundingTime) return;
+          const ms = Math.max(0, nextFundingTime - Date.now());
+          const hh = String(Math.floor(ms / 3600000)).padStart(2, '0');
+          const mm = String(Math.floor((ms % 3600000) / 60000)).padStart(2, '0');
+          const ss = String(Math.floor((ms % 60000) / 1000)).padStart(2, '0');
+          const base = document.getElementById('tk-oi').textContent.split(' / ')[0] || '-';
+          document.getElementById('tk-oi').textContent = `${base} / Funding in ${hh}:${mm}:${ss}`;
+        }, 1000);
+      }
+
+      function bindTimeframeButtons() {
+        const group = document.getElementById('tf-group');
+        group.querySelectorAll('.tf-btn').forEach((btn) => {
+          btn.addEventListener('click', async () => {
+            group.querySelectorAll('.tf-btn').forEach((b) => b.classList.remove('active'));
+            btn.classList.add('active');
+            timeframe = btn.dataset.tf;
+            try {
+              await refreshKlines();
+            } catch (e) {
+              document.getElementById('chart-status').textContent = `Kline load error: ${e}`;
+            }
+          });
+        });
+      }
+
+      async function boot() {
+        buildChart();
+        bindTimeframeButtons();
+        startFundingCountdown();
+        refreshOverview().catch(() => {});
+        refreshKlines().catch(() => {});
+        refreshDepth().catch(() => {});
+        setInterval(() => refreshOverview().catch(() => {}), 3000);
+        setInterval(() => refreshDepth().catch(() => {}), 2000);
+        setInterval(() => refreshKlines().catch(() => {}), 12000);
+      }
+
+      boot();
+    </script>
+  </body>
+</html>

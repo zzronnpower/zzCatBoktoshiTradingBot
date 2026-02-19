@@ -1,0 +1,293 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>zzCatBoktoshiTradingBot</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <h1>zzCatBoktoshiTradingBot</h1>
+        <p>ETHUSDT-only MA50 4H strategy monitor.</p>
+        <div class="nav-links">
+          <a href="/" class="active">Dashboard</a>
+          <a href="/manual">Manual Trade</a>
+          <a href="/eth-chart">ETH Chart</a>
+          <a href="/chatlog">ChatLog</a>
+        </div>
+        <div class="live-bar" id="live-bar">
+          <span class="dot" id="live-dot"></span>
+          <span id="live-text">Connecting...</span>
+        </div>
+      </header>
+
+      <section class="stats" id="top-stats">
+        <div class="stat-card"><span class="label">Balance</span><strong id="stat-balance">-</strong></div>
+        <div class="stat-card"><span class="label">Available</span><strong id="stat-available">-</strong></div>
+        <div class="stat-card"><span class="label">Open Positions</span><strong id="stat-open">-</strong></div>
+        <div class="stat-card"><span class="label">Unrealized PnL</span><strong id="stat-upnl">-</strong></div>
+        <div class="stat-card"><span class="label">Last Signal</span><strong id="stat-signal">-</strong></div>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <h2>Bot Status</h2>
+          <div id="status" class="kv-list">Loading...</div>
+        </div>
+        <div class="card">
+          <h2>Account Overview</h2>
+          <div id="account" class="kv-list">Loading...</div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <h2>Open Positions (ETH)</h2>
+          <h3 class="muted">Strategy Position</h3>
+          <div id="positions-strategy">Loading...</div>
+          <h3 class="muted" style="margin-top: 12px;">Manual Position</h3>
+          <div id="positions-manual">Loading...</div>
+        </div>
+        <div class="card">
+          <h2>PnL History</h2>
+          <div id="pnl">Loading...</div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <h2>Signals</h2>
+          <div id="signals">Loading...</div>
+        </div>
+        <div class="card">
+          <h2>Trade History</h2>
+          <div id="history">Loading...</div>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <h2>Logs</h2>
+          <div id="logs">Loading...</div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const money = (n) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+      const pct = (n) => `${(Number(n || 0) * 100).toFixed(2)}%`;
+      const ts = (sec) => {
+        if (!sec) return '-';
+        const d = new Date(Number(sec) * 1000);
+        return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
+      };
+      const tsMs = (ms) => {
+        if (!ms) return '-';
+        const d = new Date(Number(ms));
+        return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
+      };
+
+      function renderKV(el, rows) {
+        el.innerHTML = rows
+          .map((r) => `<div class="kv-row"><span>${r.key}</span><strong>${r.value}</strong></div>`)
+          .join('');
+      }
+
+      function renderTable(el, columns, rows) {
+        if (!rows || !rows.length) {
+          el.innerHTML = '<p class="muted">No data yet.</p>';
+          return;
+        }
+        const head = columns.map((c) => `<th>${c}</th>`).join('');
+        const body = rows
+          .map((row) => `<tr>${row.map((col) => `<td>${col}</td>`).join('')}</tr>`)
+          .join('');
+        el.innerHTML = `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+      }
+
+      function renderLogs(el, items) {
+        if (!items || !items.length) {
+          el.innerHTML = '<p class="muted">No logs yet.</p>';
+          return;
+        }
+        el.innerHTML = `<ul class="log-list">${items
+          .slice(0, 60)
+          .map(
+            (l) =>
+              `<li><span class="tag ${String(l.level || '').toLowerCase()}">${l.level || 'INFO'}</span><span>${ts(
+                l.ts,
+              )}</span><p>${l.message || ''}</p></li>`,
+          )
+          .join('')}</ul>`;
+      }
+
+      async function fetchJson(path, timeoutMs = 4500) {
+        const controller = new AbortController();
+        const t = setTimeout(() => controller.abort(), timeoutMs);
+        try {
+          const response = await fetch(path, { cache: 'no-store', signal: controller.signal });
+          if (!response.ok) {
+            throw new Error(`${path} failed: ${response.status}`);
+          }
+          return response.json();
+        } finally {
+          clearTimeout(t);
+        }
+      }
+
+      function setLiveState(mode, message) {
+        const bar = document.getElementById('live-bar');
+        const dot = document.getElementById('live-dot');
+        const text = document.getElementById('live-text');
+        bar.classList.remove('ok', 'warn', 'err');
+        if (mode) bar.classList.add(mode);
+        if (dot) dot.className = `dot ${mode || ''}`;
+        if (text) text.textContent = message;
+      }
+
+      let refreshRunning = false;
+      let refreshErrors = 0;
+
+      async function refresh() {
+        if (refreshRunning) return;
+        refreshRunning = true;
+        try {
+          const [status, account, positions, history, pnl, signals, logs] = await Promise.all([
+            fetchJson('/api/status'),
+            fetchJson('/api/account'),
+            fetchJson('/api/open-positions'),
+            fetchJson('/api/trade-history'),
+            fetchJson('/api/pnl-history'),
+            fetchJson('/api/signals'),
+            fetchJson('/api/logs'),
+          ]);
+
+          const accountData = account.account || {};
+          const boks = accountData.boks || {};
+          const openItems = positions.items || [];
+          const strategyPosition = positions.strategy_position;
+          const manualPosition = positions.manual_position;
+          const unrealized = openItems.reduce((sum, p) => sum + Number(p.unrealizedPnl || 0), 0);
+
+          document.getElementById('stat-balance').textContent = `${money(boks.balance)} BOKS`;
+          document.getElementById('stat-available').textContent = `${money(boks.availableBalance)} BOKS`;
+          document.getElementById('stat-open').textContent = `${openItems.length}`;
+          document.getElementById('stat-upnl').textContent = `${unrealized >= 0 ? '+' : ''}${money(unrealized)} BOKS`;
+          document.getElementById('stat-upnl').className = unrealized >= 0 ? 'up' : 'down';
+        document.getElementById('stat-signal').textContent =
+          status?.strategy_state === 'paused' ? 'PAUSED' : status?.last_signal?.signal ? 'LONG READY' : 'WAIT';
+
+          renderKV(document.getElementById('status'), [
+            { key: 'Bot status', value: status.bot_status || '-' },
+            { key: 'Dry run', value: status.dry_run ? 'true' : 'false' },
+            { key: 'Strategy state', value: status.strategy_state || 'running' },
+            { key: 'Trade pair', value: status.trade_pair || 'ETHUSDT' },
+            { key: 'Last tick', value: ts(status.last_tick) },
+            { key: 'Signal reason', value: status?.last_signal?.reason || '-' },
+          ]);
+
+          renderKV(document.getElementById('account'), [
+            { key: 'Bot name', value: accountData.botName || '-' },
+            { key: 'Bot status', value: accountData.status || '-' },
+            { key: 'Balance', value: `${money(boks.balance)} BOKS` },
+            { key: 'Locked margin', value: `${money(boks.lockedMargin)} BOKS` },
+            { key: 'Available', value: `${money(boks.availableBalance)} BOKS` },
+            { key: 'Total trades', value: `${accountData?.stats?.totalTrades || 0}` },
+            { key: 'Win rate', value: `${((accountData?.stats?.winRate || 0) * 100).toFixed(2)}%` },
+          ]);
+
+        renderTable(
+          document.getElementById('positions-strategy'),
+          ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'uPnL', 'Opened'],
+          strategyPosition
+            ? [[
+                strategyPosition.coin || '-',
+                strategyPosition.side || '-',
+                money(strategyPosition.entryPrice),
+                money(strategyPosition.currentPrice),
+                strategyPosition.stopLoss ? money(strategyPosition.stopLoss) : '-',
+                strategyPosition.takeProfit ? money(strategyPosition.takeProfit) : '-',
+                `${Number(strategyPosition.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(strategyPosition.unrealizedPnl)} BOKS`,
+                tsMs(strategyPosition.openedAt),
+              ]]
+            : [],
+        );
+
+        renderTable(
+          document.getElementById('positions-manual'),
+          ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'uPnL', 'Opened'],
+          manualPosition
+            ? [[
+                manualPosition.coin || '-',
+                manualPosition.side || '-',
+                money(manualPosition.entryPrice),
+                money(manualPosition.currentPrice),
+                manualPosition.stopLoss ? money(manualPosition.stopLoss) : '-',
+                manualPosition.takeProfit ? money(manualPosition.takeProfit) : '-',
+                `${Number(manualPosition.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(manualPosition.unrealizedPnl)} BOKS`,
+                tsMs(manualPosition.openedAt),
+              ]]
+            : [],
+        );
+
+          renderTable(
+            document.getElementById('history'),
+            ['Time', 'Action', 'Coin', 'Side', 'Margin', 'Lev', 'Status'],
+            (history.local_exec || []).slice(0, 20).map((t) => [
+              ts(t.ts),
+              t.action || '-',
+              t.coin || '-',
+              t.side || '-',
+              money(t.margin),
+              `x${money(t.leverage)}`,
+              t.status || '-',
+            ]),
+          );
+
+          renderTable(
+            document.getElementById('pnl'),
+            ['Time', 'Equity', 'Balance', 'uPnL'],
+            (pnl.items || []).slice(0, 20).map((r) => [
+              ts(r.ts),
+              `${money(r.total_equity)} BOKS`,
+              `${money(r.balance)} BOKS`,
+              `${Number(r.unrealized || 0) >= 0 ? '+' : ''}${money(r.unrealized)} BOKS`,
+            ]),
+          );
+
+          renderTable(
+            document.getElementById('signals'),
+            ['Time', 'Coin', 'TF', 'Signal', 'Reason'],
+            (signals.items || []).slice(0, 20).map((s) => {
+              let reason = '-';
+              try {
+                const details = JSON.parse(s.details || '{}');
+                reason = details.reason || '-';
+              } catch (e) {
+                reason = '-';
+              }
+              return [ts(s.ts), s.coin || '-', s.timeframe || '-', s.signal ? 'YES' : 'NO', reason];
+            }),
+          );
+
+          renderLogs(document.getElementById('logs'), logs.items || []);
+
+          const now = new Date();
+          setLiveState('ok', `Live - Last update: ${now.toLocaleTimeString()}`);
+          refreshErrors = 0;
+        } catch (err) {
+          refreshErrors += 1;
+          const warnText = refreshErrors > 2 ? 'Reconnecting... check API/container status' : 'Temporary delay, retrying...';
+          setLiveState(refreshErrors > 2 ? 'err' : 'warn', `${warnText} (${String(err)})`);
+        } finally {
+          refreshRunning = false;
+        }
+      }
+
+      refresh();
+      setInterval(refresh, 3000);
+    </script>
+  </body>
+</html>

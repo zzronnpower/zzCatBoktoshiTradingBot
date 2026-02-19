@@ -1,0 +1,10 @@
+services:
+  mtc-bot:
+    build: .
+    container_name: mtc-bot
+    env_file:
+      - .env
+    ports:
+      - "8000:8000"
+    volumes:
+      - ./data:/app/data

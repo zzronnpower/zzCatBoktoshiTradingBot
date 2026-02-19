@@ -1,0 +1,232 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Manual Trade - zzCatBoktoshiTradingBot</title>
+    <link rel="stylesheet" href="/static/app.css" />
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <h1>Manual Trade Console</h1>
+        <p>Force open LONG ETHUSDT or close open ETHUSDT positions.</p>
+        <div class="nav-links">
+          <a href="/">Dashboard</a>
+          <a href="/manual" class="active">Manual Trade</a>
+          <a href="/eth-chart">ETH Chart</a>
+          <a href="/chatlog">ChatLog</a>
+        </div>
+      </header>
+
+      <section class="grid manual-grid">
+        <div class="card">
+          <h2>Strategy Control</h2>
+          <p class="muted">Pause only the auto strategy engine. Manual open/close still works.</p>
+          <div class="btn-row">
+            <button id="btn-pause" class="btn btn-warning">Pause Running Bot</button>
+            <button id="btn-resume" class="btn btn-primary">Resume Bot</button>
+          </div>
+          <div id="strategy-state" class="muted">Strategy state: loading...</div>
+        </div>
+
+        <div class="card">
+          <h2>Force Open</h2>
+          <p class="muted">Open LONG ETHUSDT immediately with configured risk settings (100 BOKS, x5, SL/TP by capital).</p>
+          <button id="btn-open" class="btn btn-primary">Force Open LONG ETHUSDT</button>
+        </div>
+
+        <div class="card">
+          <h2>Close Position</h2>
+          <p class="muted">Close only the manual-owned LONG ETHUSDT position.</p>
+          <button id="btn-close" class="btn btn-danger">Close Manual ETH Position</button>
+          <button id="btn-close-strategy" class="btn btn-warning" style="margin-top: 10px;">Close Strategy Position</button>
+        </div>
+      </section>
+
+      <section class="grid">
+        <div class="card">
+          <h2>Current Open Positions</h2>
+          <p class="muted">Strategy Position</p>
+          <div id="positions-strategy">Loading...</div>
+          <p class="muted" style="margin-top: 10px;">Manual Position</p>
+          <div id="positions-manual">Loading...</div>
+        </div>
+        <div class="card">
+          <h2>Action Result</h2>
+          <div id="result" class="kv-list"><div class="kv-row"><span>Status</span><strong>Idle</strong></div></div>
+        </div>
+      </section>
+    </div>
+
+    <script>
+      const money = (n) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+      const tsMs = (ms) => {
+        if (!ms) return '-';
+        const d = new Date(Number(ms));
+        return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
+      };
+
+      async function fetchJson(path, options = {}) {
+        const res = await fetch(path, options);
+        return res.json();
+      }
+
+      function renderTable(el, columns, rows) {
+        if (!rows || !rows.length) {
+          el.innerHTML = '<p class="muted">No open ETHUSDT positions.</p>';
+          return;
+        }
+        const head = columns.map((c) => `<th>${c}</th>`).join('');
+        const body = rows.map((r) => `<tr>${r.map((x) => `<td>${x}</td>`).join('')}</tr>`).join('');
+        el.innerHTML = `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+      }
+
+      function renderResult(data, isError = false) {
+        const rows = [];
+        rows.push({ key: 'Success', value: data.success ? 'true' : 'false' });
+        if (data.message) rows.push({ key: 'Message', value: data.message });
+        if (typeof data.closed !== 'undefined') rows.push({ key: 'Closed', value: String(data.closed) });
+        if (data.dry_run) rows.push({ key: 'Dry run', value: 'true' });
+        if (data.code) rows.push({ key: 'Code', value: data.code });
+        if (data.errors && data.errors.length) rows.push({ key: 'Errors', value: data.errors.join(' | ') });
+        const html = rows
+          .map((r) => `<div class="kv-row"><span>${r.key}</span><strong>${r.value}</strong></div>`)
+          .join('');
+        const container = document.getElementById('result');
+        container.className = isError ? 'kv-list down' : 'kv-list';
+        container.innerHTML = html;
+      }
+
+      async function refreshPositions() {
+        const [data, status] = await Promise.all([fetchJson('/api/open-positions'), fetchJson('/api/status')]);
+        const strategy = data.strategy_position || null;
+        const manual = data.manual_position || null;
+        document.getElementById('strategy-state').textContent = `Strategy state: ${status.strategy_state || 'running'}`;
+        renderTable(
+          document.getElementById('positions-strategy'),
+          ['Position ID', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'uPnL', 'Opened'],
+          strategy
+            ? [[
+                strategy.positionId || '-',
+                strategy.side || '-',
+                money(strategy.entryPrice),
+                money(strategy.currentPrice),
+                strategy.stopLoss ? money(strategy.stopLoss) : '-',
+                strategy.takeProfit ? money(strategy.takeProfit) : '-',
+                `${Number(strategy.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(strategy.unrealizedPnl)} BOKS`,
+                tsMs(strategy.openedAt),
+              ]]
+            : [],
+        );
+        renderTable(
+          document.getElementById('positions-manual'),
+          ['Position ID', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'uPnL', 'Opened'],
+          manual
+            ? [[
+                manual.positionId || '-',
+                manual.side || '-',
+                money(manual.entryPrice),
+                money(manual.currentPrice),
+                manual.stopLoss ? money(manual.stopLoss) : '-',
+                manual.takeProfit ? money(manual.takeProfit) : '-',
+                `${Number(manual.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(manual.unrealizedPnl)} BOKS`,
+                tsMs(manual.openedAt),
+              ]]
+            : [],
+        );
+      }
+
+      async function forceOpen() {
+        const btn = document.getElementById('btn-open');
+        btn.disabled = true;
+        btn.textContent = 'Opening...';
+        try {
+          const data = await fetchJson('/api/manual/force-open-long', { method: 'POST' });
+          renderResult(data, !data.success);
+          await refreshPositions();
+        } catch (e) {
+          renderResult({ success: false, message: String(e) }, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Force Open LONG ETHUSDT';
+        }
+      }
+
+      async function closePosition() {
+        if (!confirm('Close manual ETHUSDT position?')) return;
+        const btn = document.getElementById('btn-close');
+        btn.disabled = true;
+        btn.textContent = 'Closing...';
+        try {
+          const data = await fetchJson('/api/manual/close-position', { method: 'POST' });
+          renderResult(data, !data.success);
+          await refreshPositions();
+        } catch (e) {
+          renderResult({ success: false, message: String(e) }, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Close Manual ETH Position';
+        }
+      }
+
+      async function closeStrategyPosition() {
+        if (!confirm('Close strategy ETHUSDT position?')) return;
+        const btn = document.getElementById('btn-close-strategy');
+        btn.disabled = true;
+        btn.textContent = 'Closing Strategy...';
+        try {
+          const data = await fetchJson('/api/manual/close-strategy-position', { method: 'POST' });
+          renderResult(data, !data.success);
+          await refreshPositions();
+        } catch (e) {
+          renderResult({ success: false, message: String(e) }, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Close Strategy Position';
+        }
+      }
+
+      async function pauseStrategy() {
+        const btn = document.getElementById('btn-pause');
+        btn.disabled = true;
+        btn.textContent = 'Pausing...';
+        try {
+          const data = await fetchJson('/api/bot/pause', { method: 'POST' });
+          renderResult(data, !data.success);
+          await refreshPositions();
+        } catch (e) {
+          renderResult({ success: false, message: String(e) }, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Pause Running Bot';
+        }
+      }
+
+      async function resumeStrategy() {
+        const btn = document.getElementById('btn-resume');
+        btn.disabled = true;
+        btn.textContent = 'Resuming...';
+        try {
+          const data = await fetchJson('/api/bot/resume', { method: 'POST' });
+          renderResult(data, !data.success);
+          await refreshPositions();
+        } catch (e) {
+          renderResult({ success: false, message: String(e) }, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Resume Bot';
+        }
+      }
+
+      document.getElementById('btn-open').addEventListener('click', forceOpen);
+      document.getElementById('btn-close').addEventListener('click', closePosition);
+      document.getElementById('btn-close-strategy').addEventListener('click', closeStrategyPosition);
+      document.getElementById('btn-pause').addEventListener('click', pauseStrategy);
+      document.getElementById('btn-resume').addEventListener('click', resumeStrategy);
+
+      refreshPositions();
+      setInterval(refreshPositions, 5000);
+    </script>
+  </body>
+</html>

@@ -6,7 +6,7 @@ from typing import Any, Deque, Dict, List, Optional
 
 from .hyperliquid_client import HyperliquidClient
 from .mtc_client import MTCClient, MTCClientError
-from .risk import build_long_sl_tp_prices, parse_total_capital
+from .risk import build_long_sl_tp_prices, build_short_sl_tp_prices, parse_total_capital
 from .storage import add_equity_snapshot, add_log, add_signal, add_trade, get_kv, set_kv
 from .strategy import evaluate_exit_ema_cross_down_15m, evaluate_long_ema_rsi_15m, evaluate_long_ma50_cross_3_candles
 
@@ -411,9 +411,17 @@ class BotRunner:
             pos = self._find_position_by_id(positions, pid)
             if not pos:
                 continue
-            if str(pos.get("side", "")).upper() != "LONG":
-                continue
             if str(pos.get("coin", "")).upper() == coin:
+                return True
+        return False
+
+    def _has_open_side_on_coin(self, positions: List[Dict[str, Any]], coin: str, side: str) -> bool:
+        target_coin = self._normalize_coin(coin)
+        target_side = str(side or "").upper().strip()
+        for pos in positions:
+            if str(pos.get("coin", "")).upper() != target_coin:
+                continue
+            if str(pos.get("side", "")).upper() == target_side:
                 return True
         return False
 
@@ -595,17 +603,19 @@ class BotRunner:
         before_positions: List[Dict[str, Any]],
         open_response: Dict[str, Any],
         coin: str,
+        side: str,
     ) -> None:
+        target_side = str(side or "LONG").upper().strip()
         before_ids = {
             str(p.get("positionId", ""))
             for p in before_positions
-            if str(p.get("coin", "")).upper() == coin and str(p.get("side", "")).upper() == "LONG"
+            if str(p.get("coin", "")).upper() == coin and str(p.get("side", "")).upper() == target_side
         }
         after_positions = self._fetch_positions(now)
         after_candidates = [
             p
             for p in after_positions
-            if str(p.get("coin", "")).upper() == coin and str(p.get("side", "")).upper() == "LONG"
+            if str(p.get("coin", "")).upper() == coin and str(p.get("side", "")).upper() == target_side
         ]
         after_ids = {str(p.get("positionId", "")) for p in after_candidates}
 
@@ -727,10 +737,14 @@ class BotRunner:
         except MTCClientError as exc:
             add_log(self.db_path, now, "ERROR", f"Close trade failed: {exc} ({exc.code})")
 
-    def manual_force_open_long(self, symbol: str = "ETHUSDT", comment: str = "Manual force open LONG") -> Dict[str, Any]:
+    def manual_force_open(self, side: str, symbol: str = "ETHUSDT", comment: str = "Manual force open") -> Dict[str, Any]:
         now = int(time.time())
         if not self.client.api_key:
             return {"success": False, "message": "MTC_API_KEY is missing."}
+
+        target_side = str(side or "").upper().strip()
+        if target_side not in {"LONG", "SHORT"}:
+            return {"success": False, "message": f"Unsupported side: {side}."}
 
         target_symbol = str(symbol or "ETHUSDT").upper().strip()
         if target_symbol not in self.MANUAL_ALLOWED_SYMBOLS:
@@ -746,6 +760,10 @@ class BotRunner:
             return {"success": False, "message": f"Manual position limit reached ({self.MANUAL_MAX_POSITIONS})."}
         if self._manual_has_open_symbol(positions, target_symbol):
             return {"success": False, "message": f"Manual {target_symbol} position is already open."}
+        if self._has_open_side_on_coin(positions, target_coin, "LONG" if target_side == "SHORT" else "SHORT"):
+            return {"success": False, "message": f"Hedge is disabled: opposite side already open on {target_symbol}."}
+        if self._has_open_side_on_coin(positions, target_coin, target_side):
+            return {"success": False, "message": f"{target_symbol} already has an open {target_side} position."}
         if len(positions) >= self.max_positions:
             return {"success": False, "message": "Max positions reached."}
 
@@ -766,22 +784,44 @@ class BotRunner:
         if entry_price <= 0:
             return {"success": False, "message": "Invalid entry price from candle data."}
 
-        risk_targets = build_long_sl_tp_prices(
-            entry_price=entry_price,
-            capital=capital,
-            margin=self.margin_boks,
-            leverage=self.leverage,
-            sl_capital_pct=self.sl_capital_pct,
-            tp_capital_pct=self.tp_capital_pct,
+        risk_targets = (
+            build_long_sl_tp_prices(
+                entry_price=entry_price,
+                capital=capital,
+                margin=self.margin_boks,
+                leverage=self.leverage,
+                sl_capital_pct=self.sl_capital_pct,
+                tp_capital_pct=self.tp_capital_pct,
+            )
+            if target_side == "LONG"
+            else build_short_sl_tp_prices(
+                entry_price=entry_price,
+                capital=capital,
+                margin=self.margin_boks,
+                leverage=self.leverage,
+                sl_capital_pct=self.sl_capital_pct,
+                tp_capital_pct=self.tp_capital_pct,
+            )
         )
+
+        stop_loss = round(risk_targets["stop_loss"], 6)
+        take_profit = round(risk_targets["take_profit"], 6)
+        if target_side == "LONG":
+            if stop_loss >= entry_price or take_profit <= entry_price:
+                return {"success": False, "message": "Invalid LONG risk targets generated from runtime settings."}
+        else:
+            if stop_loss <= entry_price or take_profit >= entry_price:
+                return {"success": False, "message": "Invalid SHORT risk targets generated from runtime settings."}
+
+        payload_comment = str(comment or "").strip() or f"Manual force open {target_side} {target_symbol}."
         payload = {
             "coin": target_coin,
-            "side": "LONG",
+            "side": target_side,
             "margin": self.margin_boks,
             "leverage": self.leverage,
-            "stopLoss": round(risk_targets["stop_loss"], 6),
-            "takeProfit": round(risk_targets["take_profit"], 6),
-            "comment": f"{comment} {target_symbol}".strip(),
+            "stopLoss": stop_loss,
+            "takeProfit": take_profit,
+            "comment": payload_comment,
         }
 
         if self.dry_run:
@@ -790,7 +830,7 @@ class BotRunner:
                 now,
                 "OPEN",
                 target_coin,
-                "LONG",
+                target_side,
                 self.margin_boks,
                 self.leverage,
                 "DRY_RUN",
@@ -802,6 +842,7 @@ class BotRunner:
                 "dry_run": True,
                 "message": "DRY_RUN enabled. No live order was sent.",
                 "symbol": target_symbol,
+                "side": target_side,
                 "payload": payload,
             }
 
@@ -815,22 +856,29 @@ class BotRunner:
                 now,
                 "OPEN",
                 target_coin,
-                "LONG",
+                target_side,
                 self.margin_boks,
                 self.leverage,
                 "OK",
                 json.dumps(response),
             )
-            self._capture_manual_position_id(now, positions, response, target_coin)
-            add_log(self.db_path, now, "INFO", f"Manual force open success on {target_symbol}.")
-            return {"success": True, "dry_run": False, "message": "Force open submitted.", "symbol": target_symbol, "response": response}
+            self._capture_manual_position_id(now, positions, response, target_coin, target_side)
+            add_log(self.db_path, now, "INFO", f"Manual force open {target_side} success on {target_symbol}.")
+            return {
+                "success": True,
+                "dry_run": False,
+                "message": "Force open submitted.",
+                "symbol": target_symbol,
+                "side": target_side,
+                "response": response,
+            }
         except MTCClientError as exc:
             add_trade(
                 self.db_path,
                 now,
                 "OPEN",
                 target_coin,
-                "LONG",
+                target_side,
                 self.margin_boks,
                 self.leverage,
                 "ERROR",
@@ -838,6 +886,12 @@ class BotRunner:
             )
             add_log(self.db_path, now, "ERROR", f"Manual force open failed: {exc} ({exc.code})")
             return {"success": False, "message": f"Open failed: {exc}", "code": exc.code}
+
+    def manual_force_open_long(self, symbol: str = "ETHUSDT", comment: str = "Manual force open") -> Dict[str, Any]:
+        return self.manual_force_open(side="LONG", symbol=symbol, comment=comment)
+
+    def manual_force_open_short(self, symbol: str = "ETHUSDT", comment: str = "Manual force open") -> Dict[str, Any]:
+        return self.manual_force_open(side="SHORT", symbol=symbol, comment=comment)
 
     def manual_close_eth_positions(self, position_id: str, comment: str = "Manual close position") -> Dict[str, Any]:
         now = int(time.time())
@@ -863,6 +917,7 @@ class BotRunner:
         if not resolved_position_id:
             return {"success": False, "message": "Manual position id is invalid."}
         position_coin = str(target.get("coin", "")).upper() or "UNKNOWN"
+        position_side = str(target.get("side", "")).upper() or "UNKNOWN"
 
         if self.dry_run:
             add_trade(
@@ -870,7 +925,7 @@ class BotRunner:
                 now,
                 "CLOSE",
                 position_coin,
-                "LONG",
+                position_side,
                 self.margin_boks,
                 self.leverage,
                 "DRY_RUN",
@@ -895,7 +950,7 @@ class BotRunner:
                 now,
                 "CLOSE",
                 position_coin,
-                "LONG",
+                position_side,
                 self.margin_boks,
                 self.leverage,
                 "OK",
@@ -907,6 +962,102 @@ class BotRunner:
         except MTCClientError as exc:
             add_log(self.db_path, now, "ERROR", f"Manual close failed {resolved_position_id}: {exc} ({exc.code})")
             return {"success": False, "message": f"Close failed: {exc}", "code": exc.code}
+
+    def manual_close_all_positions(self, comment: str = "Manual close all positions") -> Dict[str, Any]:
+        now = int(time.time())
+        if not self.client.api_key:
+            return {"success": False, "message": "MTC_API_KEY is missing."}
+
+        positions = self._fetch_positions(now)
+        self._sync_owned_position_ids(now, positions)
+        manual_ids = self._get_manual_position_ids()
+        if not manual_ids:
+            return {"success": True, "closed": 0, "message": "No open manual positions."}
+
+        targets: List[Dict[str, Any]] = []
+        for pid in manual_ids:
+            pos = self._find_position_by_id(positions, pid)
+            if pos:
+                targets.append(pos)
+
+        if not targets:
+            self._set_manual_position_ids([])
+            return {"success": True, "closed": 0, "message": "No open manual positions."}
+
+        closed_ids: List[str] = []
+        errors: List[str] = []
+
+        for target in targets:
+            position_id = str(target.get("positionId", "")).strip()
+            if not position_id:
+                continue
+            position_coin = str(target.get("coin", "")).upper() or "UNKNOWN"
+            position_side = str(target.get("side", "")).upper() or "UNKNOWN"
+
+            if self.dry_run:
+                add_trade(
+                    self.db_path,
+                    now,
+                    "CLOSE",
+                    position_coin,
+                    position_side,
+                    self.margin_boks,
+                    self.leverage,
+                    "DRY_RUN",
+                    f"manual close {position_id}",
+                )
+                closed_ids.append(position_id)
+                continue
+
+            if not self._can_send_trade(now):
+                errors.append(f"{position_id}: rate limit guard blocked this request")
+                continue
+
+            try:
+                response = self.client.close_trade({"positionId": position_id, "comment": comment})
+                add_trade(
+                    self.db_path,
+                    now,
+                    "CLOSE",
+                    position_coin,
+                    position_side,
+                    self.margin_boks,
+                    self.leverage,
+                    "OK",
+                    json.dumps(response),
+                )
+                closed_ids.append(position_id)
+            except MTCClientError as exc:
+                errors.append(f"{position_id}: {exc} ({exc.code})")
+
+        if closed_ids:
+            self._set_manual_position_ids([pid for pid in manual_ids if pid not in set(closed_ids)])
+
+        if self.dry_run:
+            add_log(self.db_path, now, "INFO", f"DRY_RUN manual close all: simulated close {len(closed_ids)} positions.")
+        elif closed_ids:
+            add_log(self.db_path, now, "INFO", f"Manual close all success count={len(closed_ids)}.")
+
+        if errors:
+            add_log(self.db_path, now, "WARN", f"Manual close all partial failures: {' | '.join(errors)}")
+
+        success = len(errors) == 0
+        message = (
+            f"Closed {len(closed_ids)} manual positions."
+            if success
+            else f"Closed {len(closed_ids)} manual positions, {len(errors)} failed."
+        )
+        result = {
+            "success": success,
+            "closed": len(closed_ids),
+            "failed": len(errors),
+            "closed_ids": closed_ids,
+            "errors": errors,
+            "message": message,
+        }
+        if self.dry_run:
+            result["dry_run"] = True
+        return result
 
     def close_strategy_position(self, comment: str = "Manual close strategy ETHUSDT") -> Dict[str, Any]:
         now = int(time.time())

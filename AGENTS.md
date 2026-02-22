@@ -33,6 +33,10 @@
 - Auto-maintenance rule:
   - After every coding task, update both `PROJECT_LOG.md` and `app/templates/chatlog.html` automatically.
   - Do not wait for user reminder to update logs/history.
+- Auto-run stack rule:
+  - After finishing code changes, automatically run the dev stack without asking user confirmation:
+    - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`
+  - Then report stack status in the reply.
 
 ## Current System Capabilities
 

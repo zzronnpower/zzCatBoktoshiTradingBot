@@ -19,8 +19,24 @@ def _mock_candles(count: int = 120):
     return out
 
 
+def _mock_top_symbols():
+    return [
+        "BTCUSDT",
+        "ETHUSDT",
+        "SOLUSDT",
+        "XRPUSDT",
+        "HYPEUSDT",
+        "PUMPUSDT",
+        "DOGEUSDT",
+        "BNBUSDT",
+        "ADAUSDT",
+        "LTCUSDT",
+    ]
+
+
 def test_overlay_rejects_wrong_interval_for_ema(monkeypatch):
     monkeypatch.setattr(app_main.runner, "get_active_strategy", lambda: app_main.runner.STRATEGY_EMA_RSI)
+    monkeypatch.setattr(app_main.aster, "get_usdt_symbols_ranked", lambda pinned_symbols=None: _mock_top_symbols())
 
     result = app_main.strategy_overlay(symbol="ETHUSDT", interval="4h", limit=120)
 
@@ -31,6 +47,7 @@ def test_overlay_rejects_wrong_interval_for_ema(monkeypatch):
 
 def test_overlay_returns_ema_lines_for_ema_strategy(monkeypatch):
     monkeypatch.setattr(app_main.runner, "get_active_strategy", lambda: app_main.runner.STRATEGY_EMA_RSI)
+    monkeypatch.setattr(app_main.aster, "get_usdt_symbols_ranked", lambda pinned_symbols=None: _mock_top_symbols())
     monkeypatch.setattr(app_main.runner.hyperliquid, "get_candles", lambda coin, interval, bars: _mock_candles(150))
     monkeypatch.setattr(app_main, "get_all_kv", lambda db_path: {})
     monkeypatch.setattr(app_main.runner, "classify_open_positions", lambda positions: {"strategy_position": None})
@@ -47,6 +64,7 @@ def test_overlay_returns_ema_lines_for_ema_strategy(monkeypatch):
 
 def test_overlay_returns_ma50_line_for_ma_strategy(monkeypatch):
     monkeypatch.setattr(app_main.runner, "get_active_strategy", lambda: app_main.runner.STRATEGY_MA50)
+    monkeypatch.setattr(app_main.aster, "get_usdt_symbols_ranked", lambda pinned_symbols=None: _mock_top_symbols())
     monkeypatch.setattr(app_main.runner.hyperliquid, "get_candles", lambda coin, interval, bars: _mock_candles(200))
     monkeypatch.setattr(app_main, "get_all_kv", lambda db_path: {})
     monkeypatch.setattr(app_main.runner, "classify_open_positions", lambda positions: {"strategy_position": None})
@@ -59,3 +77,13 @@ def test_overlay_returns_ma50_line_for_ma_strategy(monkeypatch):
     assert len(result["ma50"]) > 0
     assert result["ema_fast"] == []
     assert result["ema_slow"] == []
+
+
+def test_overlay_rejects_symbol_outside_top10(monkeypatch):
+    monkeypatch.setattr(app_main.runner, "get_active_strategy", lambda: app_main.runner.STRATEGY_MA50)
+    monkeypatch.setattr(app_main.aster, "get_usdt_symbols_ranked", lambda pinned_symbols=None: _mock_top_symbols())
+
+    result = app_main.strategy_overlay(symbol="AVAXUSDT", interval="4h", limit=100)
+
+    assert result["enabled"] is False
+    assert "top 10" in result["message"].lower()

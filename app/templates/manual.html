@@ -54,10 +54,10 @@
 
         <div class="card">
           <h2>Manual Trade Panel</h2>
-          <p class="muted">Pick a symbol, then open manual LONG with current Bot Settings profile.</p>
+          <p class="muted">Pick a symbol, then open manual LONG or SHORT with current Bot Settings profile (hedge disabled per symbol).</p>
           <div class="kv-list" style="margin-top:10px;">
             <div class="kv-row">
-              <span>Open LONG Symbol</span>
+              <span>Open Symbol</span>
               <select id="manual-open-symbol" style="max-width:210px;">
                 <option value="BTCUSDT">BTCUSDT</option>
                 <option value="ETHUSDT">ETHUSDT</option>
@@ -70,7 +70,10 @@
             </div>
             <div class="kv-row"><span>Config Preview</span><strong id="manual-config-preview">Loading...</strong></div>
           </div>
-          <button id="btn-open" class="btn btn-primary" style="margin-top:10px;">OPEN Manual LONG Position</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+            <button id="btn-open-long" class="btn btn-primary">OPEN Manual LONG Position</button>
+            <button id="btn-open-short" class="btn btn-warning">OPEN Manual SHORT Position</button>
+          </div>
         </div>
 
         <div class="card">
@@ -82,7 +85,10 @@
               <select id="manual-close-position" style="max-width:270px;"></select>
             </div>
           </div>
-          <button id="btn-close" class="btn btn-danger" style="margin-top:10px;">Manual Close Position</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+            <button id="btn-close" class="btn btn-danger">Manual Close Position</button>
+            <button id="btn-close-all-manual" class="btn" style="background:#ff8f2a; color:#111827; border-color:#ff8f2a;">Close All Manual Pos</button>
+          </div>
           <button id="btn-close-strategy" class="btn btn-warning" style="margin-top: 10px;">Close Strategy Position</button>
         </div>
       </section>
@@ -383,13 +389,16 @@
         }
       }
 
-      async function forceOpen() {
-        const btn = document.getElementById('btn-open');
+      async function forceOpen(side) {
+        const upperSide = String(side || 'LONG').toUpperCase();
+        const isShort = upperSide === 'SHORT';
+        const btn = document.getElementById(isShort ? 'btn-open-short' : 'btn-open-long');
         btn.disabled = true;
         btn.textContent = 'Opening...';
         try {
           const symbol = document.getElementById('manual-open-symbol').value || 'ETHUSDT';
-          const data = await fetchJson('/api/manual/force-open-long', {
+          const endpoint = isShort ? '/api/manual/force-open-short' : '/api/manual/force-open-long';
+          const data = await fetchJson(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
             body: JSON.stringify({ symbol }),
@@ -400,7 +409,7 @@
           renderResult({ success: false, message: String(e) }, true);
         } finally {
           btn.disabled = false;
-          btn.textContent = 'OPEN Manual LONG Position';
+          btn.textContent = isShort ? 'OPEN Manual SHORT Position' : 'OPEN Manual LONG Position';
         }
       }
 
@@ -427,6 +436,23 @@
         } finally {
           btn.disabled = false;
           btn.textContent = 'Manual Close Position';
+        }
+      }
+
+      async function closeAllManualPositions() {
+        if (!confirm('Close ALL manual-owned positions?')) return;
+        const btn = document.getElementById('btn-close-all-manual');
+        btn.disabled = true;
+        btn.textContent = 'Closing All...';
+        try {
+          const data = await fetchJson('/api/manual/close-all-positions', { method: 'POST' });
+          renderResult(data, !data.success);
+          await refreshPositions();
+        } catch (e) {
+          renderResult({ success: false, message: String(e) }, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Close All Manual Pos';
         }
       }
 
@@ -479,8 +505,10 @@
         }
       }
 
-      document.getElementById('btn-open').addEventListener('click', forceOpen);
+      document.getElementById('btn-open-long').addEventListener('click', () => forceOpen('LONG'));
+      document.getElementById('btn-open-short').addEventListener('click', () => forceOpen('SHORT'));
       document.getElementById('btn-close').addEventListener('click', closePosition);
+      document.getElementById('btn-close-all-manual').addEventListener('click', closeAllManualPositions);
       document.getElementById('btn-close-strategy').addEventListener('click', closeStrategyPosition);
       document.getElementById('btn-pause').addEventListener('click', pauseStrategy);
       document.getElementById('btn-resume').addEventListener('click', resumeStrategy);

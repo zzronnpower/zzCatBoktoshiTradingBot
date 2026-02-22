@@ -742,6 +742,100 @@ Sau đó hard refresh (Ctrl+F5) để tránh cache JS cũ.</pre></div>
 - Status orderbook hiển thị rõ nguồn `ws` hoặc `rest`.
 - Bổ sung test regression mới `tests/test_strategy_overlay.py` cho logic overlay EMA/MA50 theo timeframe.
 - Đã compile check thành công; môi trường local chưa có `pytest` nên chưa chạy test tự động được.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>bây giờ làm phần lệnh SHORT cho phần Manual trade đi. Phần config về size, TP,SL cũng như LONG nhưng ngược lại. Bạn lên plan cho mình</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã lên plan triển khai Manual SHORT:
+- thêm endpoint open SHORT riêng.
+- dùng chung config margin/leverage/sl/tp với LONG.
+- tính SL/TP SHORT đảo chiều (SL trên entry, TP dưới entry).
+- giữ guard an toàn (DRY_RUN, rate limit, whitelist, max positions).
+- mặc định no-hedge trên cùng symbol.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>không cho hedge, nhưng phần code viết như vậy API chắc chắn hiểu đúng đúng không? Ý là fomula về short bạn nêu ra đó? Check link https://boktoshi.com/mtc/skill.md này lần nữa xem</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã check lại `https://boktoshi.com/mtc/skill.md`:
+- `POST /trade/open` hỗ trợ `side: LONG | SHORT` chính thức.
+- `stopLoss`/`takeProfit` là giá tuyệt đối.
+
+Với SHORT, công thức đã áp dụng đúng:
+- `stopLoss = entry * (1 + sl_move_pct)`
+- `takeProfit = entry * (1 - tp_move_pct)`
+
+Đã thêm guard trước khi gửi API để đảm bảo hướng giá luôn đúng cho LONG/SHORT và bật no-hedge trên cùng symbol.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>OK, viết đi</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã implement xong Manual SHORT theo đúng yêu cầu:
+- Backend: thêm `build_short_sl_tp_prices(...)` và refactor manual open thành `manual_force_open(side=...)`.
+- API: thêm `POST /api/manual/force-open-short`.
+- UI Manual: thêm nút `OPEN Manual SHORT Position` bên cạnh LONG.
+- Guard:
+  - no-hedge trên cùng symbol (chặn mở nếu đang có vị thế opposite side).
+  - vẫn giữ whitelist, max manual positions, DRY_RUN và rate-limit guard.
+  - validate hướng SL/TP đúng với từng side trước khi gửi API.
+- Test: thêm test SHORT risk và mở SHORT/no-hedge cases.
+- Verify: `python3 -m compileall app BoktoshiBotModule tests` pass.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>dò giùm tôi khi mở LONG hoặc Short Manual thì có phần nào kiểu báo message "Manual open position from dashboard SHORT BTCUSDT" không</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Có. Comment open manual hiện tại được ghép từ base message + side + symbol nên sẽ ra dạng:
+`Manual open position from dashboard SHORT BTCUSDT` hoặc `... LONG ETHUSDT`.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>Đổi Message đó thành cái gì đó nghe ngầu tí : "We - The Cat Matrix are opening a LONG position on "thêm pair vào" " có được không ? LONG thì là LONG, short thì là SHORT</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Hoàn toàn được. Đã chốt theo biến thể bạn chọn ở bước sau.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>thôi đổi thành : zzCatzz from the Matrix is opening a LONG position on {PAIR}, hoặc SHORT thì là short đi</pre></div>
+            <div class="msg user"><span class="who">User</span><pre>OK đổi giùm mình đi bạn, thêm dấu . cuối câu</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã đổi xong comment open manual trong API:
+- LONG: `zzCatzz from the Matrix is opening a LONG position on {PAIR}.`
+- SHORT: `zzCatzz from the Matrix is opening a SHORT position on {PAIR}.`
+
+Message này sẽ được gửi vào trường `comment` khi gọi open trade từ Manual dashboard.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>Đổi cái "Manual close position from dashboard" thành "zzCatzz has exit the Maxtrix. ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ"</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã đổi xong comment close manual trong API thành đúng chuỗi bạn yêu cầu:
+`zzCatzz has exit the Maxtrix. ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ`</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>thứ 1: cái chart Overlay giờ có thể ap dụng cho toàn bộ các Pair trong Tab AsterChart không? thứ 2 là có 1 nut toggle Overlay, default là off, để load chart nhanh hơn, khi có nhu cầu cần xem Strategy overlay trên chart thì tôi chủ động bật và mới load lên. Thứ 3 là chart load này có load toàn bộ chart candle không hay chỉ load 1 số lượng thôi check lại cho tôi nhé</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã check code hiện tại:
+- Overlay lúc đó vẫn ETH-only.
+- Chưa có toggle overlay (đang auto load).
+- Candle chart đang load giới hạn 400 cây, không phải toàn bộ lịch sử.
+
+Đề xuất: mở overlay cho top 10 symbols đầu list, thêm toggle default OFF, tăng limit lên 1000.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>1/ Làm Overlay cho phép dùng cho 10 pair đầu tiên trong list. 2/ Lấy limit lên 1000 tối đã luôn. 3/ Toggle overlay Default off. => lên plan kết hợp với ý tưởng của bạn đi</pre></div>
+            <div class="msg user"><span class="who">User</span><pre>ok làm đi. lấy theo số 1) nhé.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã implement theo đúng yêu cầu:
+- Overlay mở cho top 10 symbols đầu list (nguồn xếp hạng giống dropdown).
+- Backend overlay bỏ ETH-only hard lock, tính line/marker theo symbol đang chọn.
+- Thêm nút toggle Overlay trên chart, mặc định OFF; chỉ khi ON mới fetch/refresh overlay.
+- Tăng limit candle chart lên 1000 và limit overlay lên 1000.
+- Bổ sung test overlay top10 và cập nhật compile verify pass.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>làm 1 nut Close All Manual Pos kế bên nút Manual Close Position, cho background màu Cam, bấm vào sẽ đóng toàn bộ Position Manual đang mở</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã làm xong:
+- Thêm nút cam `Close All Manual Pos` đặt cạnh `Manual Close Position` ở trang Manual.
+- Nút này gọi endpoint mới `POST /api/manual/close-all-positions`.
+- Backend thêm flow `manual_close_all_positions(...)` để đóng toàn bộ vị thế manual-owned (LONG/SHORT).
+- Có confirm trước khi đóng hàng loạt, và trả kết quả số lệnh đã đóng/thất bại.
+- Đã thêm test regression cho close-all manual positions.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>bạn note vào việc sau khi code xong tự động chạy Stack cho mình, khỏi cần hỏi, giờ chạy đi bạn và note lại</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã chạy stack dev ngay:
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`
+
+Kết quả: container `CatBoktoshiTradingBot-dev` đang Running.
+
+Đồng thời đã note rule mới trong `AGENTS.md`: sau khi hoàn thành code thì tự động chạy stack dev, không hỏi lại.</pre></div>
           </div>
         </div>
       </section>

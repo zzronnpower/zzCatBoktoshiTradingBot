@@ -153,3 +153,91 @@ def test_ema_strategy_keeps_one_position_per_symbol(tmp_path, monkeypatch):
     runner._maybe_open_long(1700000030, account, positions)
 
     assert open_called["value"] is False
+
+
+def test_manual_force_open_short_builds_inverse_risk_targets(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+
+    monkeypatch.setattr(runner, "_fetch_account", lambda now: {"boks": {"balance": 1000, "lockedMargin": 0}})
+    monkeypatch.setattr(runner, "_fetch_positions", lambda now: [])
+    monkeypatch.setattr(runner, "_sync_owned_position_ids", lambda now, positions: None)
+    monkeypatch.setattr(runner, "_can_send_trade", lambda now: True)
+    monkeypatch.setattr(runner.hyperliquid, "get_candles", lambda coin, interval, bars: [{"close": 2000.0}])
+    monkeypatch.setattr(runner, "_capture_manual_position_id", lambda *args, **kwargs: None)
+
+    captured = {}
+
+    def fake_open_trade(payload):
+        captured["payload"] = payload
+        return {"positionId": "short1"}
+
+    monkeypatch.setattr(runner.client, "open_trade", fake_open_trade)
+
+    result = runner.manual_force_open_short(symbol="ETHUSDT")
+
+    assert result["success"] is True
+    assert result["side"] == "SHORT"
+    payload = captured["payload"]
+    assert payload["side"] == "SHORT"
+    assert payload["stopLoss"] > 2000.0
+    assert payload["takeProfit"] < 2000.0
+
+
+def test_manual_force_open_short_rejects_hedge_if_long_exists(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+
+    monkeypatch.setattr(runner, "_fetch_account", lambda now: {"boks": {"balance": 1000, "lockedMargin": 0}})
+    monkeypatch.setattr(
+        runner,
+        "_fetch_positions",
+        lambda now: [{"positionId": "s1", "coin": "ETH", "side": "LONG", "openedAt": 1000}],
+    )
+    monkeypatch.setattr(runner, "_sync_owned_position_ids", lambda now, positions: None)
+
+    result = runner.manual_force_open_short(symbol="ETHUSDT")
+
+    assert result["success"] is False
+    assert "Hedge is disabled" in result["message"]
+
+
+def test_manual_force_open_long_rejects_if_manual_short_same_symbol_exists(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+    runner._set_manual_position_ids(["m-short"])
+
+    monkeypatch.setattr(runner, "_fetch_account", lambda now: {"boks": {"balance": 1000, "lockedMargin": 0}})
+    monkeypatch.setattr(
+        runner,
+        "_fetch_positions",
+        lambda now: [{"positionId": "m-short", "coin": "ETH", "side": "SHORT", "openedAt": 1000}],
+    )
+    monkeypatch.setattr(runner, "_sync_owned_position_ids", lambda now, positions: None)
+
+    result = runner.manual_force_open_long(symbol="ETHUSDT")
+
+    assert result["success"] is False
+    assert "already open" in result["message"]
+
+
+def test_manual_close_all_positions_closes_only_manual_owned(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+    set_kv(runner.db_path, "manual_position_ids", json.dumps(["m1", "m2"]))
+
+    positions = [
+        {"positionId": "m1", "coin": "ETH", "side": "LONG", "openedAt": 1001},
+        {"positionId": "m2", "coin": "BTC", "side": "SHORT", "openedAt": 1002},
+        {"positionId": "x1", "coin": "SOL", "side": "LONG", "openedAt": 1003},
+    ]
+    close_calls = []
+
+    monkeypatch.setattr(runner, "_fetch_positions", lambda now: positions)
+    monkeypatch.setattr(runner, "_sync_owned_position_ids", lambda now, pos: None)
+    monkeypatch.setattr(runner, "_can_send_trade", lambda now: True)
+    monkeypatch.setattr(runner.client, "close_trade", lambda payload: close_calls.append(payload) or {"ok": True})
+
+    result = runner.manual_close_all_positions(comment="close all")
+
+    assert result["success"] is True
+    assert result["closed"] == 2
+    assert len(close_calls) == 2
+    assert {c["positionId"] for c in close_calls} == {"m1", "m2"}
+    assert runner._get_manual_position_ids() == []

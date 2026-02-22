@@ -1,6 +1,6 @@
 import json
 import os
-from typing import Any, Dict
+from typing import Any, Dict, List
 
 from fastapi import Body, FastAPI, HTTPException
 from fastapi.responses import HTMLResponse
@@ -89,6 +89,8 @@ SL_CAPITAL_PCT = float(os.getenv("SL_CAPITAL_PCT", "0.01"))
 TP_CAPITAL_PCT = float(os.getenv("TP_CAPITAL_PCT", "0.03"))
 MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", "5"))
 ASTER_BASE_URL = os.getenv("ASTER_BASE_URL", "https://www.asterdex.com")
+PINNED_ASTER_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "HYPEUSDT", "PUMPUSDT", "DOGEUSDT"]
+OVERLAY_TOP_SYMBOL_LIMIT = 10
 
 app = FastAPI(title="zzCatBoktoshiTradingBot")
 templates = Jinja2Templates(directory="app/templates")
@@ -321,13 +323,33 @@ def select_strategy(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any
 @app.post("/api/manual/force-open-long")
 def manual_force_open_long(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:  # type: ignore[valid-type]
     symbol = str(payload.get("symbol", "ETHUSDT") or "ETHUSDT").upper()
-    return runner.manual_force_open_long(symbol=symbol, comment="Manual open LONG position from dashboard")
+    return runner.manual_force_open_long(
+        symbol=symbol,
+        comment=f"zzCatzz from the Matrix is opening a LONG position on {symbol}.",
+    )
+
+
+@app.post("/api/manual/force-open-short")
+def manual_force_open_short(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:  # type: ignore[valid-type]
+    symbol = str(payload.get("symbol", "ETHUSDT") or "ETHUSDT").upper()
+    return runner.manual_force_open_short(
+        symbol=symbol,
+        comment=f"zzCatzz from the Matrix is opening a SHORT position on {symbol}.",
+    )
 
 
 @app.post("/api/manual/close-position")
 def manual_close_position(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:  # type: ignore[valid-type]
     position_id = str(payload.get("position_id", "") or "")
-    return runner.manual_close_eth_positions(position_id=position_id, comment="Manual close LONG position from dashboard")
+    return runner.manual_close_eth_positions(
+        position_id=position_id,
+        comment="zzCatzz has exit the Maxtrix. ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ",
+    )
+
+
+@app.post("/api/manual/close-all-positions")
+def manual_close_all_positions() -> Dict[str, Any]:
+    return runner.manual_close_all_positions(comment="zzCatzz has exit the Maxtrix. ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ")
 
 
 @app.post("/api/manual/close-strategy-position")
@@ -376,9 +398,7 @@ def aster_depth(symbol: str = "ETHUSDT", limit: int = 20) -> Dict[str, Any]:
 @app.get("/api/aster/symbols")
 def aster_symbols() -> Dict[str, Any]:
     try:
-        items = aster.get_usdt_symbols_ranked(
-            pinned_symbols=["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "HYPEUSDT", "PUMPUSDT", "DOGEUSDT"]
-        )
+        items = aster.get_usdt_symbols_ranked(pinned_symbols=PINNED_ASTER_SYMBOLS)
         return {"items": items, "count": len(items)}
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
@@ -390,14 +410,19 @@ def strategy_overlay(symbol: str = "ETHUSDT", interval: str = "4h", limit: int =
     active_strategy = runner.get_active_strategy()
     required_interval = "15m" if active_strategy == runner.STRATEGY_EMA_RSI else "4h"
 
-    if selected_symbol != runner.trade_pair:
+    try:
+        ranked_symbols = aster.get_usdt_symbols_ranked(pinned_symbols=PINNED_ASTER_SYMBOLS)
+    except Exception:
+        ranked_symbols = []
+    overlay_symbols: List[str] = [str(s).upper() for s in ranked_symbols[:OVERLAY_TOP_SYMBOL_LIMIT]]
+    if selected_symbol not in overlay_symbols:
         return {
             "enabled": False,
             "source": "hyperliquid",
             "symbol": selected_symbol,
             "strategy": active_strategy,
             "required_interval": required_interval,
-            "message": "Strategy overlay is ETHUSDT-only.",
+            "message": f"Overlay is available for top {OVERLAY_TOP_SYMBOL_LIMIT} symbols in the list.",
             "ma50": [],
             "ema_fast": [],
             "ema_slow": [],
@@ -410,7 +435,7 @@ def strategy_overlay(symbol: str = "ETHUSDT", interval: str = "4h", limit: int =
         return {
             "enabled": False,
             "source": "hyperliquid",
-            "symbol": runner.trade_pair,
+            "symbol": selected_symbol,
             "interval": requested_interval,
             "strategy": active_strategy,
             "required_interval": required_interval,
@@ -422,9 +447,9 @@ def strategy_overlay(symbol: str = "ETHUSDT", interval: str = "4h", limit: int =
             "position": None,
         }
 
-    bars = max(80, min(int(limit), 600))
+    bars = max(80, min(int(limit), 1000))
     try:
-        candles = runner.hyperliquid.get_candles(runner.trade_coin, interval=required_interval, bars=bars)
+        candles = runner.hyperliquid.get_candles(runner._normalize_coin(selected_symbol), interval=required_interval, bars=bars)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=f"Failed to fetch Hyperliquid candles: {exc}") from exc
 
@@ -455,7 +480,7 @@ def strategy_overlay(symbol: str = "ETHUSDT", interval: str = "4h", limit: int =
     strategy_position = grouped.get("strategy_position") if isinstance(grouped, dict) else None
 
     position_overlay = None
-    if isinstance(strategy_position, dict):
+    if isinstance(strategy_position, dict) and str(strategy_position.get("coin", "")).upper() == runner._normalize_coin(selected_symbol):
         entry_price = _safe_float(strategy_position.get("entryPrice"), 0.0)
         stop_loss = _safe_float(strategy_position.get("stopLoss"), 0.0)
         take_profit = _safe_float(strategy_position.get("takeProfit"), 0.0)
@@ -474,7 +499,7 @@ def strategy_overlay(symbol: str = "ETHUSDT", interval: str = "4h", limit: int =
     return {
         "enabled": True,
         "source": "hyperliquid",
-        "symbol": runner.trade_pair,
+        "symbol": selected_symbol,
         "interval": required_interval,
         "strategy": active_strategy,
         "required_interval": required_interval,

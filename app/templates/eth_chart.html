@@ -15,6 +15,9 @@
       #tk-oi { white-space: nowrap; }
       .chart-card { min-height: 620px; }
       .chart-toolbar { display:flex; justify-content:space-between; align-items:center; gap:8px; margin-bottom:10px; flex-wrap: wrap; }
+      .overlay-ctrl { display:flex; align-items:center; gap:8px; }
+      .overlay-toggle { border:1px solid var(--line); background:rgba(255,255,255,.04); color:var(--text); padding:6px 10px; border-radius:8px; cursor:pointer; }
+      .overlay-toggle.on { border-color: #89e6a8; color:#89e6a8; }
       .overlay-note { color: var(--muted); font-size: 12px; }
       .symbol-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
       .symbol-group input, .symbol-group select {
@@ -95,7 +98,10 @@
               <button class="tf-btn" data-tf="4h">4h</button>
               <button class="tf-btn" data-tf="1d">1d</button>
             </div>
-            <div class="overlay-note" id="overlay-status">Strategy overlay: loading...</div>
+            <div class="overlay-ctrl">
+              <button id="overlay-toggle" class="overlay-toggle" type="button">Overlay OFF</button>
+              <div class="overlay-note" id="overlay-status">Strategy overlay: OFF</div>
+            </div>
             <div class="live-mini" id="chart-status">Loading...</div>
           </div>
           <div id="chart"></div>
@@ -137,6 +143,9 @@
       let wsConnected = false;
       let wsStreamSymbol = '';
       let lastWsDepthAt = 0;
+      let overlayEnabled = false;
+      let overlayIntervalId = null;
+      let overlayTopSymbols = [];
 
       const nf = (n, max = 2) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: max });
       const money = (n) => nf(n, 2);
@@ -254,6 +263,38 @@
         }
       }
 
+      function updateOverlayToggleUi() {
+        const btn = document.getElementById('overlay-toggle');
+        if (!btn) return;
+        btn.textContent = overlayEnabled ? 'Overlay ON' : 'Overlay OFF';
+        btn.classList.toggle('on', overlayEnabled);
+      }
+
+      function stopOverlayRefreshTimer() {
+        if (overlayIntervalId) {
+          clearInterval(overlayIntervalId);
+          overlayIntervalId = null;
+        }
+      }
+
+      function startOverlayRefreshTimer() {
+        stopOverlayRefreshTimer();
+        if (!overlayEnabled) return;
+        overlayIntervalId = setInterval(() => refreshStrategyOverlay().catch(() => {}), 12000);
+      }
+
+      function setOverlayEnabled(enabled) {
+        overlayEnabled = Boolean(enabled);
+        updateOverlayToggleUi();
+        if (!overlayEnabled) {
+          stopOverlayRefreshTimer();
+          clearStrategyOverlay('Strategy overlay: OFF (toggle ON to load)');
+          return;
+        }
+        refreshStrategyOverlay().catch(() => {});
+        startOverlayRefreshTimer();
+      }
+
       function applyPositionLines(position) {
         clearPositionLines();
         if (!position) return;
@@ -293,14 +334,18 @@
       }
 
       async function refreshStrategyOverlay() {
-        if (inFlightOverlay) return;
-        if (selectedSymbol !== 'ETHUSDT') {
-          clearStrategyOverlay('Strategy overlay: ETHUSDT only');
+        if (!overlayEnabled) {
+          clearStrategyOverlay('Strategy overlay: OFF (toggle ON to load)');
           return;
         }
+        if (overlayTopSymbols.length && !overlayTopSymbols.includes(selectedSymbol)) {
+          clearStrategyOverlay('Strategy overlay: available for top 10 symbols only');
+          return;
+        }
+        if (inFlightOverlay) return;
         inFlightOverlay = true;
         try {
-          const data = await fetchJson(`/api/strategy/overlay?symbol=ETHUSDT&interval=${timeframe}&limit=320`, 9000);
+          const data = await fetchJson(`/api/strategy/overlay?symbol=${selectedSymbol}&interval=${timeframe}&limit=1000`, 9000);
           if (!data.enabled) {
             const required = String(data.required_interval || '').trim();
             const hint = required ? ` | switch timeframe to ${required}` : '';
@@ -373,6 +418,7 @@
         const data = await fetchJson('/api/aster/symbols', 8000);
         const items = Array.isArray(data.items) ? data.items : [];
         allSymbols = items.length ? items : ['ETHUSDT'];
+        overlayTopSymbols = allSymbols.slice(0, 10);
         const saved = (localStorage.getItem('aster_chart_symbol') || 'ETHUSDT').toUpperCase();
         setSymbol(allSymbols.includes(saved) ? saved : (allSymbols.includes('ETHUSDT') ? 'ETHUSDT' : allSymbols[0]));
         renderSymbolOptions('');
@@ -399,7 +445,7 @@
         const symbol = selectedSymbol;
         document.getElementById('chart-status').textContent = `Loading ${symbol} ${timeframe} candles...`;
         try {
-          const data = await fetchJson(`/api/aster/klines?symbol=${symbol}&interval=${timeframe}&limit=400`);
+          const data = await fetchJson(`/api/aster/klines?symbol=${symbol}&interval=${timeframe}&limit=1000`);
           if (symbol !== selectedSymbol) return;
           const items = data.items || [];
           const candles = items.map((k) => ({
@@ -605,8 +651,12 @@
       function bindSymbolControls() {
         const search = document.getElementById('symbol-search');
         const select = document.getElementById('symbol-select');
+        const overlayToggle = document.getElementById('overlay-toggle');
         search.addEventListener('input', () => {
           renderSymbolOptions(search.value || '');
+        });
+        overlayToggle.addEventListener('click', () => {
+          setOverlayEnabled(!overlayEnabled);
         });
         select.addEventListener('change', async () => {
           setSymbol(select.value || 'ETHUSDT');
@@ -626,15 +676,18 @@
         bindTimeframeButtons();
         bindSymbolControls();
         await loadSymbols();
+        setOverlayEnabled(false);
         await refreshOverview();
         await refreshKlines();
-        await refreshStrategyOverlay();
+        if (overlayEnabled) {
+          await refreshStrategyOverlay();
+        }
         connectDepthStream();
         await refreshDepth();
         setInterval(() => refreshOverview().catch(() => {}), 3000);
         setInterval(() => refreshDepth().catch(() => {}), 2000);
         setInterval(() => refreshKlines().catch(() => {}), 12000);
-        setInterval(() => refreshStrategyOverlay().catch(() => {}), 12000);
+        startOverlayRefreshTimer();
       }
 
       boot().catch((e) => {

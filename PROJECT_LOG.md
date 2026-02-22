@@ -1,6 +1,6 @@
 # PROJECT_LOG
 
-Last updated: 2026-02-19 (ASTER websocket fallback + overlay tests)
+Last updated: 2026-02-19 (auto-run dev stack rule)
 Project: `zzCatBoktoshiTradingBot`
 
 ## 1) Project Intent
@@ -617,3 +617,87 @@ When a new assistant session starts:
 - Verification notes:
   - `python3 -m compileall app BoktoshiBotModule tests` passed.
   - `pytest` is not installed in current local environment (`No module named pytest`).
+
+## 20) Latest Update (2026-02-19)
+
+- Added manual SHORT open flow with same runtime config profile as LONG (margin/leverage/SL%/TP%).
+- Implemented inverse SHORT risk target builder in `BoktoshiBotModule/risk.py`:
+  - `stopLoss` above entry, `takeProfit` below entry.
+- Refactored manual open path in `BoktoshiBotModule/bot_runner.py`:
+  - new shared `manual_force_open(side=...)`
+  - wrappers: `manual_force_open_long(...)` and `manual_force_open_short(...)`
+  - added strict target-direction guards before API submit:
+    - LONG requires `stopLoss < entry < takeProfit`
+    - SHORT requires `takeProfit < entry < stopLoss`
+- Added no-hedge protection for manual open:
+  - rejects opening SHORT when opposite LONG is open on same symbol.
+  - rejects opening LONG when opposite SHORT is open on same symbol.
+  - keeps one manual-owned position per symbol regardless side.
+- Added API endpoint `POST /api/manual/force-open-short` in `app/main.py`.
+- Updated Manual page UI (`app/templates/manual.html`):
+  - now has both `OPEN Manual LONG Position` and `OPEN Manual SHORT Position` actions.
+  - updated panel description to reflect no-hedge behavior.
+- Added tests:
+  - `tests/test_risk_short.py` for directional LONG vs SHORT risk targets.
+  - extended `tests/test_bot_runner_flows.py` for manual SHORT payload + no-hedge checks.
+- Verification notes:
+  - `python3 -m compileall app BoktoshiBotModule tests` passed.
+
+## 21) Latest Update (2026-02-19)
+
+- Updated manual open trade comment text sent to MTC API (`app/main.py`) with styled, side-specific message and trailing period:
+  - LONG: `zzCatzz from the Matrix is opening a LONG position on {PAIR}.`
+  - SHORT: `zzCatzz from the Matrix is opening a SHORT position on {PAIR}.`
+- Updated manual open payload builder (`BoktoshiBotModule/bot_runner.py`) to use provided comment verbatim (no extra side/symbol suffix appended).
+- This applies to both manual endpoints:
+  - `POST /api/manual/force-open-long`
+  - `POST /api/manual/force-open-short`
+
+## 22) Latest Update (2026-02-19)
+
+- Updated manual close trade comment text sent to MTC API (`app/main.py`) for `POST /api/manual/close-position`:
+  - `zzCatzz has exit the Maxtrix. ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ`
+
+## 23) Latest Update (2026-02-19)
+
+- Expanded ASTER Chart overlay scope from ETH-only to top 10 symbols in the ranked dropdown list.
+- Updated overlay backend (`app/main.py`):
+  - validates symbol against first 10 results from `get_usdt_symbols_ranked(...)`.
+  - computes overlay candles on selected symbol coin (not hardcoded ETH).
+  - keeps strategy timeframe constraints (`MA50 -> 4h`, `EMA -> 15m`).
+  - raises overlay candle cap from 600 to 1000 bars.
+- Updated chart frontend (`app/templates/eth_chart.html`):
+  - added Overlay toggle button with default OFF state.
+  - overlay requests and auto-refresh only run when toggle is ON.
+  - overlay request limit increased to 1000.
+  - kline chart request limit increased from 400 to 1000.
+  - when OFF, overlay data/markers are cleared and status shows disabled hint.
+  - when symbol is outside top 10, status clearly reports availability constraint.
+- Updated overlay tests (`tests/test_strategy_overlay.py`):
+  - mock ranked symbol list for deterministic behavior.
+  - added test that rejects symbols outside top 10.
+- Verification notes:
+  - `python3 -m compileall app BoktoshiBotModule tests` passed.
+
+## 24) Latest Update (2026-02-19)
+
+- Added new backend action to close all manual-owned positions in one click:
+  - `BotRunner.manual_close_all_positions(...)` in `BoktoshiBotModule/bot_runner.py`.
+  - Supports both LONG and SHORT manual positions.
+  - Keeps ownership safety: closes only position IDs in `manual_position_ids`.
+  - Returns structured result with `closed`, `failed`, `closed_ids`, and `errors`.
+- Added API endpoint:
+  - `POST /api/manual/close-all-positions` in `app/main.py`.
+  - Uses existing Matrix-style close comment text.
+- Updated Manual UI (`app/templates/manual.html`):
+  - Added orange button `Close All Manual Pos` next to `Manual Close Position`.
+  - Added confirm dialog and action handler to call the new endpoint.
+- Added regression test in `tests/test_bot_runner_flows.py`:
+  - verifies close-all closes only manual-owned positions and clears manual ownership IDs.
+
+## 25) Latest Update (2026-02-19)
+
+- Added workflow note in `AGENTS.md` to auto-run dev stack after each coding task without asking user first.
+- Standardized command for post-change bring-up:
+  - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`
+- Executed stack command immediately after implementing close-all control update; container remains running.

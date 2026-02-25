@@ -12,17 +12,19 @@
 
 ## Mission in this Repository
 
-- Maintain and improve the ETHUSDT long-only trading bot.
+- Maintain and improve the multi-symbol long/short trading bot operations (strategy and manual controls).
 - Keep UX readable for non-technical operation.
 - Preserve safety controls (DRY_RUN, risk checks, max positions, rate limiting).
 - Keep docs and logs current so future sessions can continue quickly.
 
 ## Non-Negotiable Project Rules
 
-- Trading pair for strategy: ETHUSDT only.
+- Strategy scope:
+  - Supported strategy symbols are `BTCUSDT`, `ETHUSDT`, `SOLUSDT`.
+  - Strategy mode can run single strategy or all enabled strategies simultaneously.
 - Position ownership model:
-  - Strategy: ETHUSDT LONG ownership remains single strategy position
-  - Manual: allow up to 3 manual-owned LONG positions from approved symbol whitelist
+  - Strategy: tracked by strategy slot map (`strategy_position_ids`) and can include multiple strategy-owned positions across supported symbols.
+  - Manual: allow up to 3 manual-owned positions from approved symbol whitelist.
 - Default execution safety:
   - Use `DRY_RUN=true` until explicitly switched off.
   - Never remove core risk guards without user request.
@@ -41,11 +43,18 @@
 ## Current System Capabilities
 
 - Dashboard with account, positions, trades, pnl history, signals, logs.
-- Manual trade page:
-  - Force open LONG ETHUSDT
-  - Close manual-owned ETHUSDT position
-  - Close strategy-owned ETHUSDT position
-  - Pause/Resume strategy engine
+- Position Management page (`/manual`):
+  - Bot Settings editor (margin, leverage, SL, TP)
+  - Manual Trade Panel:
+    - Force open manual LONG/SHORT for allowed symbols
+    - Close single manual-owned position
+    - Close all manual-owned positions
+  - Strategy Control:
+    - Select strategy / run all strategies
+    - Pause/Resume strategy engine
+  - Strategy close controls:
+    - Close selected strategy-owned position
+    - Close all strategy-owned positions
 - ETH Chart page (ASTER-only):
   - Candlestick + volume
   - Timeframes
@@ -55,7 +64,7 @@
 ## API and Runtime Landmarks
 
 - App entry: `app/main.py`
-- Bot loop and trade logic: `app/bot_runner.py`
+- Bot loop and trade logic: `BoktoshiBotModule/bot_runner.py`
 - MTC client: `app/mtc_client.py`
 - ASTER market data client: `app/aster_client.py`
 - DB utilities: `app/storage.py`
@@ -88,3 +97,17 @@
   - Log/monitoring impact
   - Update to `PROJECT_LOG.md`
 - Keep Boktoshi code grouped under `BoktoshiBotModule/`; ASTER futures module stays under `AsterTradingModule/`.
+
+## High-Use Endpoints (Current)
+
+- Strategy control:
+  - `POST /api/strategy/select`
+  - `POST /api/strategy/run-all`
+- Manual position actions:
+  - `POST /api/manual/force-open-long`
+  - `POST /api/manual/force-open-short`
+  - `POST /api/manual/close-position`
+  - `POST /api/manual/close-all-positions`
+- Strategy position actions:
+  - `POST /api/manual/close-strategy-position` (supports optional `position_id`)
+  - `POST /api/manual/close-all-strategy-positions`

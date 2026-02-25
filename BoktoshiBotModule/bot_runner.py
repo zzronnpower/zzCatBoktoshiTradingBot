@@ -26,11 +26,15 @@ def _to_int(value: Any, default: int = 0) -> int:
 
 
 class BotRunner:
-    MANUAL_ALLOWED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "HYPEUSDT", "PUMPUSDT", "DOGEUSDT"]
+    MANUAL_ALLOWED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "TAOUSDT", "XRPUSDT", "HYPEUSDT", "PUMPUSDT", "DOGEUSDT"]
     MANUAL_MAX_POSITIONS = 3
     STRATEGY_MA50 = "MA50_4H_CROSSUP_3C_LONG_ONLY"
     STRATEGY_EMA_RSI = "EMA_RSI_15M_ETH_ONLY"
+    STRATEGY_TARGET_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     EMA_STATE_KEY = "ema_strategy_state"
+    STRATEGY_POSITION_IDS_KEY = "strategy_position_ids"
+    ENABLED_STRATEGIES_KEY = "enabled_strategies"
+    ACTIVE_STRATEGY_KEY = "active_strategy"
 
     def __init__(
         self,
@@ -57,6 +61,8 @@ class BotRunner:
         self.bot_desc = bot_desc
         self.trade_pair = trade_coin.upper()
         self.trade_coin = self._normalize_coin(self.trade_pair)
+        self.default_trade_pair = self.trade_pair
+        self.default_trade_coin = self.trade_coin
         self.margin_boks = margin_boks
         self.leverage = leverage
         self.sl_capital_pct = sl_capital_pct
@@ -71,6 +77,7 @@ class BotRunner:
         self._state_lock = threading.Lock()
         self._strategy_paused = False
         self.active_strategy = self.STRATEGY_MA50
+        self.enabled_strategies: List[str] = [self.STRATEGY_MA50]
 
     def get_runtime_settings(self) -> Dict[str, float]:
         with self._state_lock:
@@ -84,29 +91,67 @@ class BotRunner:
     def get_active_strategy(self) -> str:
         return self.active_strategy
 
+    def get_enabled_strategies(self) -> List[str]:
+        return list(self.enabled_strategies)
+
+    def get_strategy_mode(self) -> str:
+        return "all" if len(self.enabled_strategies) > 1 else "single"
+
     def list_strategies(self) -> List[Dict[str, str]]:
         return [
             {
                 "id": self.STRATEGY_MA50,
-                "label": "MA50 4H CrossUp 3 Candles (ETH only)",
-                "entry": "Price crosses above MA50 then closes above MA50 for 3 consecutive 4H candles.",
+                "label": "MA50 4H CrossUp 3 Candles (BTC/ETH/SOL)",
+                "entry": "Price crosses above MA50 then closes above MA50 for 3 consecutive 4H candles on BTCUSDT/ETHUSDT/SOLUSDT.",
             },
             {
                 "id": self.STRATEGY_EMA_RSI,
-                "label": "EMA20/50 + RSI filter 15m (ETH only)",
-                "entry": "EMA20 cross above EMA50 with RSI in 50-70 band on closed 15m candle.",
+                "label": "EMA20/50 + RSI filter 15m (BTC/ETH/SOL)",
+                "entry": "EMA20 cross above EMA50 with RSI in 50-70 band on closed 15m candle for BTCUSDT/ETHUSDT/SOLUSDT.",
             },
         ]
 
+    def _valid_strategy_ids(self) -> List[str]:
+        return [item["id"] for item in self.list_strategies()]
+
+    def _set_enabled_strategies(self, strategy_ids: List[str], now: Optional[int] = None, message: str = "") -> Dict[str, Any]:
+        valid_ids = set(self._valid_strategy_ids())
+        cleaned = [sid for sid in [str(x or "").strip().upper() for x in strategy_ids] if sid in valid_ids]
+        deduped = list(dict.fromkeys(cleaned))
+        if not deduped:
+            return {"success": False, "message": "No valid strategies selected."}
+        self.enabled_strategies = deduped
+        self.active_strategy = deduped[0]
+        set_kv(self.db_path, self.ACTIVE_STRATEGY_KEY, self.active_strategy)
+        set_kv(self.db_path, self.ENABLED_STRATEGIES_KEY, json.dumps(self.enabled_strategies))
+        if now is None:
+            now = int(time.time())
+        if message:
+            add_log(self.db_path, now, "INFO", message)
+        return {
+            "success": True,
+            "active": self.active_strategy,
+            "enabled": list(self.enabled_strategies),
+            "mode": self.get_strategy_mode(),
+        }
+
     def set_active_strategy(self, strategy_id: str) -> Dict[str, Any]:
         selected = str(strategy_id or "").strip().upper()
-        valid_ids = {item["id"] for item in self.list_strategies()}
+        valid_ids = set(self._valid_strategy_ids())
         if selected not in valid_ids:
             return {"success": False, "message": f"Unsupported strategy: {strategy_id}"}
-        self.active_strategy = selected
-        set_kv(self.db_path, "active_strategy", selected)
-        add_log(self.db_path, int(time.time()), "INFO", f"Active strategy set to {selected}.")
-        return {"success": True, "strategy_id": selected}
+        return self._set_enabled_strategies(
+            [selected],
+            now=int(time.time()),
+            message=f"Strategy mode switched to SINGLE. Active strategy set to {selected}.",
+        )
+
+    def run_all_strategies(self) -> Dict[str, Any]:
+        return self._set_enabled_strategies(
+            self._valid_strategy_ids(),
+            now=int(time.time()),
+            message="Strategy mode switched to ALL. Both strategies are enabled.",
+        )
 
     def apply_runtime_settings(self, payload: Dict[str, Any]) -> Dict[str, float]:
         margin_boks = max(_to_float(payload.get("margin_boks"), self.margin_boks), 1.0)
@@ -143,9 +188,26 @@ class BotRunner:
             self.leverage = max(leverage, 1.0)
             self.sl_capital_pct = max(sl_capital_pct, 0.0001)
             self.tp_capital_pct = max(tp_capital_pct, 0.0)
-        selected = get_kv(self.db_path, "active_strategy", self.STRATEGY_MA50).upper().strip()
-        valid_ids = {item["id"] for item in self.list_strategies()}
-        self.active_strategy = selected if selected in valid_ids else self.STRATEGY_MA50
+        valid_ids = set(self._valid_strategy_ids())
+        selected = get_kv(self.db_path, self.ACTIVE_STRATEGY_KEY, self.STRATEGY_MA50).upper().strip()
+        enabled_raw = get_kv(self.db_path, self.ENABLED_STRATEGIES_KEY, "")
+        enabled: List[str] = []
+        if enabled_raw:
+            try:
+                parsed = json.loads(enabled_raw)
+                if isinstance(parsed, list):
+                    enabled = [str(x or "").strip().upper() for x in parsed]
+            except Exception:
+                enabled = []
+        enabled = [sid for sid in enabled if sid in valid_ids]
+        if not enabled and selected in valid_ids:
+            enabled = [selected]
+        if not enabled:
+            enabled = [self.STRATEGY_MA50]
+        self.enabled_strategies = list(dict.fromkeys(enabled))
+        self.active_strategy = self.enabled_strategies[0]
+        set_kv(self.db_path, self.ACTIVE_STRATEGY_KEY, self.active_strategy)
+        set_kv(self.db_path, self.ENABLED_STRATEGIES_KEY, json.dumps(self.enabled_strategies))
         return self.get_runtime_settings()
 
     @staticmethod
@@ -174,15 +236,51 @@ class BotRunner:
             return ""
         return f"local-close:{pid}"
 
+    def _strategy_slot_key(self, strategy_id: Optional[str] = None, symbol: Optional[str] = None) -> str:
+        sid = str(strategy_id or self.active_strategy or "").upper().strip()
+        pair = str(symbol or self.trade_pair or "").upper().strip()
+        return f"{sid}:{pair}"
+
+    def _get_strategy_position_map(self) -> Dict[str, str]:
+        raw = get_kv(self.db_path, self.STRATEGY_POSITION_IDS_KEY, "")
+        out: Dict[str, str] = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    out = {str(k): str(v) for k, v in parsed.items() if str(v)}
+            except Exception:
+                out = {}
+        legacy = get_kv(self.db_path, "strategy_position_id", "")
+        if legacy:
+            legacy_key = self._strategy_slot_key(self.STRATEGY_MA50, self.default_trade_pair)
+            if legacy_key not in out:
+                out[legacy_key] = legacy
+            current_key = self._strategy_slot_key(self.active_strategy, self.trade_pair)
+            if current_key not in out:
+                out[current_key] = legacy
+        return out
+
+    def _set_strategy_position_map(self, value: Dict[str, str]) -> None:
+        clean = {str(k): str(v) for k, v in value.items() if str(k) and str(v)}
+        set_kv(self.db_path, self.STRATEGY_POSITION_IDS_KEY, json.dumps(clean))
+        legacy_key = self._strategy_slot_key(self.STRATEGY_MA50, self.default_trade_pair)
+        set_kv(self.db_path, "strategy_position_id", clean.get(legacy_key, ""))
+
     def _owner_key(self, owner: str) -> str:
         if owner == "manual":
             return "manual_position_ids"
+        if owner == "strategy":
+            return self.STRATEGY_POSITION_IDS_KEY
         return f"{owner}_position_id"
 
     def _get_owner_position_id(self, owner: str) -> str:
         if owner == "manual":
             ids = self._get_manual_position_ids()
             return ids[0] if ids else ""
+        if owner == "strategy":
+            value = self._get_strategy_position_map()
+            return value.get(self._strategy_slot_key(), "")
         return get_kv(self.db_path, self._owner_key(owner), "")
 
     def _set_owner_position_id(self, owner: str, position_id: str) -> None:
@@ -191,6 +289,15 @@ class BotRunner:
                 self._set_manual_position_ids([position_id])
             else:
                 self._set_manual_position_ids([])
+            return
+        if owner == "strategy":
+            value = self._get_strategy_position_map()
+            slot = self._strategy_slot_key()
+            if position_id:
+                value[slot] = str(position_id)
+            else:
+                value.pop(slot, None)
+            self._set_strategy_position_map(value)
             return
         set_kv(self.db_path, self._owner_key(owner), position_id)
 
@@ -265,12 +372,28 @@ class BotRunner:
         self._sync_owned_position_ids(now, positions)
         history = self._fetch_history(now)
         self._record_equity(now, account, positions)
-        self._manage_open_positions(now, account, positions)
-        if not self.is_strategy_paused():
-            self._maybe_open_long(now, account, positions)
+        self._run_all_strategy_contexts(now, account, positions)
         if now % 3600 < self.poll_seconds:
             self._maybe_daily_claim(now)
         set_kv(self.db_path, "last_history", json.dumps(history))
+
+    def _run_all_strategy_contexts(self, now: int, account: Dict[str, Any], positions: List[Dict[str, Any]]) -> None:
+        paused = self.is_strategy_paused()
+        selected_strategy = self.enabled_strategies[0] if self.enabled_strategies else self.STRATEGY_MA50
+        selected_pair = self.default_trade_pair
+        for strategy_id in self.enabled_strategies:
+            for symbol in self.STRATEGY_TARGET_SYMBOLS:
+                self._set_strategy_context(strategy_id, symbol)
+                self._manage_open_positions(now, account, positions)
+                if not paused:
+                    self._maybe_open_long(now, account, positions)
+                positions = self._fetch_positions(now)
+        self._set_strategy_context(selected_strategy, selected_pair)
+
+    def _set_strategy_context(self, strategy_id: str, symbol: str) -> None:
+        self.active_strategy = str(strategy_id or self.STRATEGY_MA50).upper().strip()
+        self.trade_pair = str(symbol or self.default_trade_pair).upper().strip()
+        self.trade_coin = self._normalize_coin(self.trade_pair)
 
     def is_strategy_paused(self) -> bool:
         with self._state_lock:
@@ -388,53 +511,26 @@ class BotRunner:
         }
 
     def _sync_owned_position_ids(self, now: int, positions: List[Dict[str, Any]]) -> None:
-        strategy_id = self._get_owner_position_id("strategy")
+        strategy_map = self._get_strategy_position_map()
         manual_ids = self._get_manual_position_ids()
 
-        if strategy_id and not self._find_position_by_id(positions, strategy_id):
-            self._set_owner_position_id("strategy", "")
-            self._log_structured(now, "INFO", "stale_strategy_position_cleared", position_id=strategy_id)
+        stale_strategy_ids: List[str] = []
+        next_strategy_map: Dict[str, str] = {}
+        for slot, strategy_id in strategy_map.items():
+            if strategy_id and self._find_position_by_id(positions, strategy_id):
+                next_strategy_map[slot] = strategy_id
+            elif strategy_id:
+                stale_strategy_ids.append(strategy_id)
+        if next_strategy_map != strategy_map:
+            self._set_strategy_position_map(next_strategy_map)
+        if stale_strategy_ids:
+            self._log_structured(now, "INFO", "stale_strategy_position_cleared", position_ids=stale_strategy_ids)
 
         valid_manual_ids = [pid for pid in manual_ids if self._find_position_by_id(positions, pid)]
         cleared_ids = [pid for pid in manual_ids if pid not in valid_manual_ids]
         if cleared_ids:
             self._set_manual_position_ids(valid_manual_ids)
             self._log_structured(now, "INFO", "stale_manual_positions_cleared", position_ids=cleared_ids)
-
-        strategy_id = self._get_owner_position_id("strategy")
-        manual_ids = self._get_manual_position_ids()
-        if strategy_id or manual_ids:
-            return
-
-        eth_positions = self._eth_long_positions(positions)
-        if not eth_positions:
-            return
-
-        if len(eth_positions) == 1:
-            fallback_manual = str(eth_positions[0].get("positionId", ""))
-            if fallback_manual:
-                self._set_manual_position_ids([fallback_manual])
-                add_log(
-                    self.db_path,
-                    now,
-                    "WARN",
-                    f"Mapped legacy unknown ETH position {fallback_manual} to manual owner.",
-                )
-            return
-
-        sorted_positions = sorted(eth_positions, key=lambda x: _to_int(x.get("openedAt", 0), 0))
-        strategy_fallback = str(sorted_positions[0].get("positionId", ""))
-        manual_fallback = str(sorted_positions[-1].get("positionId", ""))
-        if strategy_fallback:
-            self._set_owner_position_id("strategy", strategy_fallback)
-        if manual_fallback and manual_fallback != strategy_fallback:
-            self._set_manual_position_ids([manual_fallback])
-        add_log(
-            self.db_path,
-            now,
-            "WARN",
-            f"Mapped legacy unknown ETH positions to owners strategy={strategy_fallback}, manual={manual_fallback}.",
-        )
 
     def _owner_has_open_position(self, owner: str, positions: List[Dict[str, Any]]) -> bool:
         if owner == "manual":
@@ -478,15 +574,45 @@ class BotRunner:
             return {}
         try:
             parsed = json.loads(raw)
-            return parsed if isinstance(parsed, dict) else {}
         except Exception:
             return {}
+        if not isinstance(parsed, dict):
+            return {}
+        slot = self._strategy_slot_key()
+        nested = parsed.get(slot)
+        if isinstance(nested, dict):
+            return nested
+        if "position_id" in parsed:
+            return parsed
+        return {}
 
     def _set_ema_state(self, state: Dict[str, Any]) -> None:
-        set_kv(self.db_path, self.EMA_STATE_KEY, json.dumps(state))
+        raw = get_kv(self.db_path, self.EMA_STATE_KEY, "")
+        value: Dict[str, Any] = {}
+        if raw:
+            try:
+                parsed = json.loads(raw)
+                if isinstance(parsed, dict):
+                    value = parsed
+            except Exception:
+                value = {}
+        value[self._strategy_slot_key()] = state
+        set_kv(self.db_path, self.EMA_STATE_KEY, json.dumps(value))
 
     def _clear_ema_state(self) -> None:
-        set_kv(self.db_path, self.EMA_STATE_KEY, "")
+        raw = get_kv(self.db_path, self.EMA_STATE_KEY, "")
+        if not raw:
+            return
+        try:
+            parsed = json.loads(raw)
+            if not isinstance(parsed, dict):
+                set_kv(self.db_path, self.EMA_STATE_KEY, "")
+                return
+        except Exception:
+            set_kv(self.db_path, self.EMA_STATE_KEY, "")
+            return
+        parsed.pop(self._strategy_slot_key(), None)
+        set_kv(self.db_path, self.EMA_STATE_KEY, json.dumps(parsed))
 
     def _ensure_ema_state(self, now: int, position: Dict[str, Any], account: Dict[str, Any]) -> Dict[str, Any]:
         position_id = str(position.get("positionId", ""))
@@ -677,22 +803,33 @@ class BotRunner:
                 add_log(self.db_path, now, "WARN", f"Mapped manual position id {fallback_id} using fallback matching.")
 
     def classify_open_positions(self, positions: List[Dict[str, Any]]) -> Dict[str, Any]:
-        strategy_id = self._get_owner_position_id("strategy")
+        strategy_map = self._get_strategy_position_map()
         manual_ids = self._get_manual_position_ids()
 
-        strategy_position = self._find_position_by_id(positions, strategy_id)
+        strategy_positions: List[Dict[str, Any]] = []
+        seen_strategy_ids: set[str] = set()
+        for strategy_id in strategy_map.values():
+            if not strategy_id or strategy_id in seen_strategy_ids:
+                continue
+            pos = self._find_position_by_id(positions, strategy_id)
+            if pos is not None:
+                strategy_positions.append(pos)
+                seen_strategy_ids.add(strategy_id)
+        strategy_position = strategy_positions[0] if strategy_positions else None
         manual_positions = [self._find_position_by_id(positions, pid) for pid in manual_ids]
         manual_positions = [p for p in manual_positions if p is not None]
         manual_position = manual_positions[0] if manual_positions else None
 
         unknown_positions: List[Dict[str, Any]] = []
-        for pos in self._eth_long_positions(positions):
+        known_ids = set(seen_strategy_ids).union(set(manual_ids))
+        for pos in positions:
             pid = str(pos.get("positionId", ""))
-            if pid and pid not in {strategy_id, *manual_ids}:
+            if pid and pid not in known_ids:
                 unknown_positions.append(pos)
 
         return {
             "strategy_position": strategy_position,
+            "strategy_positions": strategy_positions,
             "manual_position": manual_position,
             "manual_positions": manual_positions,
             "unknown_positions": unknown_positions,
@@ -1248,22 +1385,33 @@ class BotRunner:
             result["dry_run"] = True
         return result
 
-    def close_strategy_position(self, comment: str = "Manual close strategy ETHUSDT") -> Dict[str, Any]:
+    def close_strategy_position(self, position_id: str = "", comment: str = "Manual close strategy position") -> Dict[str, Any]:
         now = int(time.time())
         if not self.client.api_key:
             return {"success": False, "message": "MTC_API_KEY is missing."}
 
         positions = self._fetch_positions(now)
         self._sync_owned_position_ids(now, positions)
-        strategy_id = self._get_owner_position_id("strategy")
-        target = self._find_position_by_id(positions, strategy_id)
+        strategy_map = self._get_strategy_position_map()
+        strategy_ids = list(dict.fromkeys([str(pid) for pid in strategy_map.values() if str(pid)]))
+        if not strategy_ids:
+            return {"success": True, "closed": 0, "message": "No open strategy positions."}
+
+        selected_id = str(position_id or "").strip()
+        if selected_id and selected_id not in strategy_ids:
+            return {"success": False, "message": "Selected position is not a strategy-owned position."}
+
+        target_id = selected_id or strategy_ids[0]
+        target = self._find_position_by_id(positions, target_id)
 
         if not target:
-            return {"success": False, "message": "No open strategy ETHUSDT position."}
+            return {"success": False, "message": "Selected strategy position is not open."}
 
-        position_id = str(target.get("positionId", ""))
-        if not position_id:
+        resolved_position_id = str(target.get("positionId", ""))
+        if not resolved_position_id:
             return {"success": False, "message": "Strategy position id is invalid."}
+        position_coin = str(target.get("coin", "")).upper() or "UNKNOWN"
+        position_side = str(target.get("side", "")).upper() or "UNKNOWN"
         close_snapshot = self._compact_position_snapshot(target)
 
         if self.dry_run:
@@ -1271,15 +1419,15 @@ class BotRunner:
                 self.db_path,
                 now,
                 "CLOSE",
-                self.trade_coin,
-                "LONG",
+                position_coin,
+                position_side,
                 self.margin_boks,
                 self.leverage,
                 "DRY_RUN",
                 json.dumps(
                     {
-                        "message": f"strategy close {position_id}",
-                        "positionId": position_id,
+                        "message": f"strategy close {resolved_position_id}",
+                        "positionId": resolved_position_id,
                         "source": "strategy",
                         "close_mode": "strategy_manual",
                         "comment": comment,
@@ -1291,54 +1439,183 @@ class BotRunner:
                 now,
                 "INFO",
                 "strategy_close_dry_run",
-                position_id=position_id,
-                external_id=self._close_external_id(position_id),
+                position_id=resolved_position_id,
+                external_id=self._close_external_id(resolved_position_id),
             )
-            return {"success": True, "dry_run": True, "message": "DRY_RUN simulated strategy position close.", "closed": 1}
+            return {
+                "success": True,
+                "dry_run": True,
+                "message": "DRY_RUN simulated strategy position close.",
+                "closed": 1,
+                "position_id": resolved_position_id,
+            }
 
         if not self._can_send_trade(now):
             return {"success": False, "message": "Rate limit guard blocked this request."}
 
         try:
-            response = self.client.close_trade({"positionId": position_id, "comment": comment})
+            response = self.client.close_trade({"positionId": resolved_position_id, "comment": comment})
             add_trade(
                 self.db_path,
                 now,
                 "CLOSE",
-                self.trade_coin,
-                "LONG",
+                position_coin,
+                position_side,
                 self.margin_boks,
                 self.leverage,
                 "OK",
                 json.dumps(
                     {
                         **(response if isinstance(response, dict) else {}),
-                        "positionId": position_id,
+                        "positionId": resolved_position_id,
                         "source": "strategy",
                         "close_mode": "strategy_manual",
                         "close_snapshot": close_snapshot,
                     }
                 ),
             )
-            self._set_owner_position_id("strategy", "")
+            next_strategy_map = {slot: pid for slot, pid in strategy_map.items() if pid != resolved_position_id}
+            self._set_strategy_position_map(next_strategy_map)
             self._log_structured(
                 now,
                 "INFO",
                 "strategy_close_manual_submitted",
-                position_id=position_id,
-                external_id=self._close_external_id(position_id),
+                position_id=resolved_position_id,
+                external_id=self._close_external_id(resolved_position_id),
             )
-            return {"success": True, "closed": 1, "message": "Closed strategy position."}
+            return {
+                "success": True,
+                "closed": 1,
+                "message": "Closed strategy position.",
+                "position_id": resolved_position_id,
+            }
         except MTCClientError as exc:
             self._log_structured(
                 now,
                 "ERROR",
                 "strategy_close_manual_failed",
-                position_id=position_id,
+                position_id=resolved_position_id,
                 error=str(exc),
                 error_code=exc.code,
             )
             return {"success": False, "message": f"Close failed: {exc}", "code": exc.code}
+
+    def close_all_strategy_positions(self, comment: str = "Manual close all strategy positions") -> Dict[str, Any]:
+        now = int(time.time())
+        if not self.client.api_key:
+            return {"success": False, "message": "MTC_API_KEY is missing."}
+
+        positions = self._fetch_positions(now)
+        self._sync_owned_position_ids(now, positions)
+        strategy_map = self._get_strategy_position_map()
+        strategy_ids = list(dict.fromkeys([str(pid) for pid in strategy_map.values() if str(pid)]))
+        if not strategy_ids:
+            return {"success": True, "closed": 0, "message": "No open strategy positions."}
+
+        targets: List[Dict[str, Any]] = []
+        for pid in strategy_ids:
+            pos = self._find_position_by_id(positions, pid)
+            if pos:
+                targets.append(pos)
+
+        if not targets:
+            self._set_strategy_position_map({})
+            return {"success": True, "closed": 0, "message": "No open strategy positions."}
+
+        closed_ids: List[str] = []
+        errors: List[str] = []
+
+        for target in targets:
+            resolved_position_id = str(target.get("positionId", "")).strip()
+            if not resolved_position_id:
+                continue
+            position_coin = str(target.get("coin", "")).upper() or "UNKNOWN"
+            position_side = str(target.get("side", "")).upper() or "UNKNOWN"
+            close_snapshot = self._compact_position_snapshot(target)
+
+            if self.dry_run:
+                add_trade(
+                    self.db_path,
+                    now,
+                    "CLOSE",
+                    position_coin,
+                    position_side,
+                    self.margin_boks,
+                    self.leverage,
+                    "DRY_RUN",
+                    json.dumps(
+                        {
+                            "message": f"strategy close {resolved_position_id}",
+                            "positionId": resolved_position_id,
+                            "source": "strategy",
+                            "close_mode": "strategy_manual_all",
+                            "comment": comment,
+                            "close_snapshot": close_snapshot,
+                        }
+                    ),
+                )
+                closed_ids.append(resolved_position_id)
+                continue
+
+            if not self._can_send_trade(now):
+                errors.append(f"{resolved_position_id}: rate limit guard blocked this request")
+                continue
+
+            try:
+                response = self.client.close_trade({"positionId": resolved_position_id, "comment": comment})
+                add_trade(
+                    self.db_path,
+                    now,
+                    "CLOSE",
+                    position_coin,
+                    position_side,
+                    self.margin_boks,
+                    self.leverage,
+                    "OK",
+                    json.dumps(
+                        {
+                            **(response if isinstance(response, dict) else {}),
+                            "positionId": resolved_position_id,
+                            "source": "strategy",
+                            "close_mode": "strategy_manual_all",
+                            "close_snapshot": close_snapshot,
+                        }
+                    ),
+                )
+                closed_ids.append(resolved_position_id)
+            except MTCClientError as exc:
+                errors.append(f"{resolved_position_id}: {exc} ({exc.code})")
+
+        if closed_ids:
+            closed_set = set(closed_ids)
+            next_strategy_map = {slot: pid for slot, pid in strategy_map.items() if pid not in closed_set}
+            self._set_strategy_position_map(next_strategy_map)
+
+        if self.dry_run:
+            self._log_structured(now, "INFO", "strategy_close_all_dry_run", closed_count=len(closed_ids), closed_ids=closed_ids)
+        elif closed_ids:
+            self._log_structured(now, "INFO", "strategy_close_all_submitted", closed_count=len(closed_ids), closed_ids=closed_ids)
+
+        if errors:
+            self._log_structured(now, "WARN", "strategy_close_all_partial_failures", failed_count=len(errors), errors=errors)
+
+        success = len(errors) == 0
+        message = (
+            f"Closed {len(closed_ids)} strategy positions."
+            if success
+            else f"Closed {len(closed_ids)} strategy positions, {len(errors)} failed."
+        )
+        result = {
+            "success": success,
+            "closed": len(closed_ids),
+            "failed": len(errors),
+            "closed_ids": closed_ids,
+            "errors": errors,
+            "message": message,
+        }
+        if self.dry_run:
+            result["dry_run"] = True
+        return result
 
     def _maybe_open_long(self, now: int, account: Dict[str, Any], positions: List[Dict[str, Any]]) -> None:
         if self._owner_has_open_position("strategy", positions):

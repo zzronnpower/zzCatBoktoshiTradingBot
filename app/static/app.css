@@ -151,6 +151,20 @@ body {
   color: var(--accent);
 }
 
+.nav-links a.nav-position-management {
+  background: #fff3bf;
+  border-color: #f2d680;
+  color: #5f4b00;
+  font-weight: 700;
+}
+
+.nav-links a.nav-position-management.active {
+  background: #ffe08a;
+  border-color: #e6bd45;
+  color: #4a3a00;
+  font-weight: 800;
+}
+
 .live-bar {
   display: inline-flex;
   align-items: center;
@@ -375,6 +389,12 @@ th {
 .btn-warning {
   background: linear-gradient(180deg, #db9f18 0%, #b97910 100%);
   color: var(--button-text);
+}
+
+.btn-run-all {
+  background: linear-gradient(180deg, #8fe7c4 0%, #64c6d6 100%);
+  color: #0b2a22;
+  border: 1px solid rgba(180, 255, 228, 0.55);
 }
 
 .kv-row input,

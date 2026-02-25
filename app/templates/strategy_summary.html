@@ -14,7 +14,7 @@
         <div class="nav-links">
           <a href="/">Dashboard</a>
           <a href="/journal">Boktoshi Trading Journal</a>
-          <a href="/manual">Manual Trade</a>
+          <a href="/manual" class="nav-position-management">Position Management</a>
           <a href="/strategy-summary" class="active">Tóm tắt Strategy</a>
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
@@ -88,12 +88,12 @@
         chip.textContent = `${status?.strategy_state === 'paused' ? 'Tạm dừng' : 'Đang chạy'} | ${strategy?.name || '-'}`;
 
         if (activeId === STRATEGY_MA50) {
-          if (titleEl) titleEl.textContent = 'Strategy Name: MA50 4H CrossUp 3 Candles (ETH Only)';
+          if (titleEl) titleEl.textContent = 'Strategy Name: MA50 4H CrossUp 3 Candles (BTC/ETH/SOL)';
           if (subtitleEl) {
-            subtitleEl.textContent = 'Chiến lược trend-following cho ETH trên khung 4H, xác nhận xu hướng bằng 3 nến liên tiếp đóng trên MA50.';
+            subtitleEl.textContent = 'Chiến lược trend-following cho BTC/ETH/SOL trên khung 4H, xác nhận xu hướng bằng 3 nến liên tiếp đóng trên MA50.';
           }
           setMetaRows([
-            { label: 'Tài sản áp dụng', value: 'ETH only' },
+            { label: 'Tài sản áp dụng', value: 'BTCUSDT, ETHUSDT, SOLUSDT' },
             { label: 'Khung thời gian', value: '4H' },
             { label: 'Mẫu xác nhận', value: 'CrossUp MA50 + 3 nến đóng trên MA50' },
           ]);
@@ -115,7 +115,7 @@
 
         if (activeId === STRATEGY_EMA) {
           const emaRuntime = strategy.ema_runtime || null;
-          if (titleEl) titleEl.textContent = 'Strategy Name: EMA20/50 + RSI filter 15m (ETH only)';
+          if (titleEl) titleEl.textContent = 'Strategy Name: EMA20/50 + RSI filter 15m (BTC/ETH/SOL)';
           if (subtitleEl) {
             subtitleEl.textContent = 'Chiến lược EMA20/EMA50 + RSI trên nến 15m đã đóng, có trailing theo R để bảo toàn lợi nhuận.';
           }

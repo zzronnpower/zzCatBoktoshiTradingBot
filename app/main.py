@@ -1141,7 +1141,7 @@ SL_CAPITAL_PCT = float(os.getenv("SL_CAPITAL_PCT", "0.01"))
 TP_CAPITAL_PCT = float(os.getenv("TP_CAPITAL_PCT", "0.03"))
 MAX_POSITIONS = int(os.getenv("MAX_POSITIONS", "5"))
 ASTER_BASE_URL = os.getenv("ASTER_BASE_URL", "https://www.asterdex.com")
-PINNED_ASTER_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "XRPUSDT", "HYPEUSDT", "PUMPUSDT", "DOGEUSDT"]
+PINNED_ASTER_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "TAOUSDT", "XRPUSDT", "HYPEUSDT", "PUMPUSDT", "DOGEUSDT"]
 OVERLAY_TOP_SYMBOL_LIMIT = 10
 
 @asynccontextmanager
@@ -1251,11 +1251,20 @@ def status() -> Dict[str, Any]:
     kv = get_all_kv(DB_PATH)
     runtime_settings = runner.get_runtime_settings()
     active_strategy = runner.get_active_strategy()
+    enabled_strategies = runner.get_enabled_strategies()
     strategy_map = {item["id"]: item for item in runner.list_strategies()}
     strategy_info = strategy_map.get(active_strategy, strategy_map.get(runner.STRATEGY_MA50, {}))
     is_ema = active_strategy == runner.STRATEGY_EMA_RSI
     ema_runtime_raw = _parse_json(kv.get(runner.EMA_STATE_KEY, ""))
-    ema_runtime = ema_runtime_raw if isinstance(ema_runtime_raw, dict) else None
+    ema_runtime = None
+    if isinstance(ema_runtime_raw, dict):
+        if "position_id" in ema_runtime_raw:
+            ema_runtime = ema_runtime_raw
+        else:
+            slot = f"{active_strategy}:{TRADE_COIN}"
+            slot_value = ema_runtime_raw.get(slot)
+            if isinstance(slot_value, dict):
+                ema_runtime = slot_value
     return {
         "bot_status": kv.get("bot_status", "unknown"),
         "strategy_state": "paused" if runner.is_strategy_paused() else "running",
@@ -1267,6 +1276,9 @@ def status() -> Dict[str, Any]:
         "strategy": {
             "id": active_strategy,
             "name": strategy_info.get("label", active_strategy),
+            "mode": runner.get_strategy_mode(),
+            "enabled_ids": enabled_strategies,
+            "symbols": runner.STRATEGY_TARGET_SYMBOLS,
             "entry": strategy_info.get("entry", ""),
             "short_enabled": False,
             "margin_boks": runtime_settings["margin_boks"],
@@ -1302,6 +1314,7 @@ def open_positions() -> Dict[str, Any]:
     return {
         "items": items,
         "strategy_position": grouped.get("strategy_position"),
+        "strategy_positions": grouped.get("strategy_positions", []),
         "manual_position": grouped.get("manual_position"),
         "manual_positions": grouped.get("manual_positions", []),
         "unknown_positions": grouped.get("unknown_positions", []),
@@ -1447,7 +1460,12 @@ def update_bot_settings(payload: Dict[str, Any] = Body(default={})) -> Dict[str,
 
 @app.get("/api/strategies")
 def list_strategies() -> Dict[str, Any]:
-    return {"active": runner.get_active_strategy(), "items": runner.list_strategies()}
+    return {
+        "active": runner.get_active_strategy(),
+        "enabled": runner.get_enabled_strategies(),
+        "mode": runner.get_strategy_mode(),
+        "items": runner.list_strategies(),
+    }
 
 
 @app.post("/api/strategy/select")
@@ -1459,6 +1477,22 @@ def select_strategy(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any
     return {
         "success": True,
         "active": runner.get_active_strategy(),
+        "enabled": runner.get_enabled_strategies(),
+        "mode": runner.get_strategy_mode(),
+        "items": runner.list_strategies(),
+    }
+
+
+@app.post("/api/strategy/run-all")
+def run_all_strategies() -> Dict[str, Any]:
+    result = runner.run_all_strategies()
+    if not result.get("success"):
+        raise HTTPException(status_code=400, detail=str(result.get("message", "Invalid strategy mode")))
+    return {
+        "success": True,
+        "active": runner.get_active_strategy(),
+        "enabled": runner.get_enabled_strategies(),
+        "mode": runner.get_strategy_mode(),
         "items": runner.list_strategies(),
     }
 
@@ -1486,18 +1520,27 @@ def manual_close_position(payload: Dict[str, Any] = Body(default={})) -> Dict[st
     position_id = str(payload.get("position_id", "") or "")
     return runner.manual_close_eth_positions(
         position_id=position_id,
-        comment="zzCatzz has exit the Maxtrix. ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ",
+        comment="The SuperBOT of zzCatzz has exited the ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ!",
     )
 
 
 @app.post("/api/manual/close-all-positions")
 def manual_close_all_positions() -> Dict[str, Any]:
-    return runner.manual_close_all_positions(comment="zzCatzz has exit the Maxtrix. ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ")
+    return runner.manual_close_all_positions(comment="The SuperBOT of zzCatzz has exited the ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ!")
 
 
 @app.post("/api/manual/close-strategy-position")
-def close_strategy_position() -> Dict[str, Any]:
-    return runner.close_strategy_position(comment="Manual close strategy LONG ETHUSDT from dashboard")
+def close_strategy_position(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:  # type: ignore[valid-type]
+    position_id = str(payload.get("position_id", "") or "")
+    return runner.close_strategy_position(
+        position_id=position_id,
+        comment="The SuperBOT of zzCatzz has exited the ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ!",
+    )
+
+
+@app.post("/api/manual/close-all-strategy-positions")
+def close_all_strategy_positions() -> Dict[str, Any]:
+    return runner.close_all_strategy_positions(comment="The SuperBOT of zzCatzz has exited the ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ!")
 
 
 @app.post("/api/bot/pause")

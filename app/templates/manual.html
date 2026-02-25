@@ -3,18 +3,18 @@
   <head>
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
-    <title>Manual Trade - zzCatBoktoshiTradingBot</title>
+    <title>Position Management - zzCatBoktoshiTradingBot</title>
     <link rel="stylesheet" href="/static/app.css" />
   </head>
   <body>
     <div class="page">
       <header class="header">
-        <h1>Manual Trade Console</h1>
-        <p>Open and close manual LONG positions while strategy remains ETHUSDT-only.</p>
+        <h1>Position Management Console</h1>
+        <p>Open/close manual positions and control single/all strategy mode on BTCUSDT, ETHUSDT, SOLUSDT.</p>
         <div class="nav-links">
           <a href="/">Dashboard</a>
           <a href="/journal">Boktoshi Trading Journal</a>
-          <a href="/manual" class="active">Manual Trade</a>
+          <a href="/manual" class="nav-position-management active">Position Management</a>
           <a href="/strategy-summary">Tóm tắt Strategy</a>
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
@@ -23,24 +23,6 @@
       </header>
 
       <section class="grid manual-grid">
-        <div class="card">
-          <h2>Strategy Control</h2>
-          <p class="muted">Pause/resume strategy engine and switch active strategy profile.</p>
-          <div class="kv-list" style="margin-top:10px;">
-            <div class="kv-row">
-              <span>Active Strategy</span>
-              <select id="strategy-select" style="max-width:300px;"></select>
-            </div>
-            <div class="kv-row"><span>Strategy Note</span><strong id="strategy-entry-note">Loading...</strong></div>
-          </div>
-          <button id="btn-apply-strategy" class="btn btn-primary" style="margin-top:10px;">Apply Strategy</button>
-          <div class="btn-row">
-            <button id="btn-pause" class="btn btn-warning">Pause Running Bot</button>
-            <button id="btn-resume" class="btn btn-primary">Resume Bot</button>
-          </div>
-          <div id="strategy-state" class="muted">Strategy state: loading...</div>
-        </div>
-
         <div class="card">
           <h2>Bot Settings</h2>
           <p class="muted">Edit shared settings used by Strategy and Manual open trade flow.</p>
@@ -63,6 +45,7 @@
                 <option value="BTCUSDT">BTCUSDT</option>
                 <option value="ETHUSDT">ETHUSDT</option>
                 <option value="SOLUSDT">SOLUSDT</option>
+                <option value="TAOUSDT">TAOUSDT</option>
                 <option value="XRPUSDT">XRPUSDT</option>
                 <option value="HYPEUSDT">HYPEUSDT</option>
                 <option value="PUMPUSDT">PUMPUSDT</option>
@@ -78,7 +61,25 @@
         </div>
 
         <div class="card">
-          <h2>Close Position</h2>
+          <h2>Strategy Control</h2>
+          <p class="muted">Pause/resume strategy engine and switch active strategy profile.</p>
+          <div class="kv-list" style="margin-top:10px;">
+            <div class="kv-row">
+              <span>Active Strategy</span>
+              <select id="strategy-select" style="max-width:300px;"></select>
+            </div>
+            <div class="kv-row"><span>Strategy Note</span><strong id="strategy-entry-note">Loading...</strong></div>
+          </div>
+          <button id="btn-apply-strategy" class="btn btn-primary" style="margin-top:10px;">Apply Strategy</button>
+          <div class="btn-row">
+            <button id="btn-pause" class="btn btn-warning">Pause Running Bot</button>
+            <button id="btn-resume" class="btn btn-primary">Resume Bot</button>
+          </div>
+          <div id="strategy-state" class="muted">Strategy state: loading...</div>
+        </div>
+
+        <div class="card">
+          <h2>CLOSE MANUAL POSITION</h2>
           <p class="muted">Select a manual-owned position and close only that one.</p>
           <div class="kv-list" style="margin-top:10px;">
             <div class="kv-row">
@@ -88,9 +89,25 @@
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
             <button id="btn-close" class="btn btn-danger">Manual Close Position</button>
-            <button id="btn-close-all-manual" class="btn" style="background:#ff8f2a; color:#111827; border-color:#ff8f2a;">Close All Manual Pos</button>
           </div>
-          <button id="btn-close-strategy" class="btn btn-warning" style="margin-top: 10px;">Close Strategy Position</button>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:8px;">
+            <button id="btn-close-all-manual" class="btn" style="background:#ff8f2a; color:#111827; border-color:#ff8f2a;">Close All Manual Positions</button>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>CLOSE STRATEGY POSITION</h2>
+          <p class="muted">Select a strategy-owned position and close it, or close all strategy positions.</p>
+          <div class="kv-list" style="margin-top:10px;">
+            <div class="kv-row">
+              <span>Strategy Position</span>
+              <select id="strategy-close-position" style="max-width:270px;"></select>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+            <button id="btn-close-strategy" class="btn btn-warning">Close Strategy Position</button>
+            <button id="btn-close-all-strategy" class="btn" style="background:#f7c948; color:#111827; border-color:#f7c948;">Close All Strategy Positions</button>
+          </div>
         </div>
       </section>
 
@@ -239,37 +256,40 @@
 
       async function refreshPositions() {
         const [data, status] = await Promise.all([fetchJson('/api/open-positions'), fetchJson('/api/status')]);
-        const strategy = data.strategy_position || null;
+        const strategyPositions = Array.isArray(data.strategy_positions) && data.strategy_positions.length
+          ? data.strategy_positions
+          : (data.strategy_position ? [data.strategy_position] : []);
         const manualPositions = Array.isArray(data.manual_positions) && data.manual_positions.length
           ? data.manual_positions
           : (data.manual_position ? [data.manual_position] : []);
         const strategyState = status.strategy_state || 'running';
-        document.getElementById('strategy-state').textContent = `Strategy state: ${strategyState} | ${status?.strategy?.name || '-'}`;
+        const modeLabel = String(status?.strategy?.mode || 'single').toLowerCase() === 'all'
+          ? `ALL (${(status?.strategy?.enabled_ids || []).length} strategies)`
+          : `SINGLE (${status?.strategy?.name || '-'})`;
+        document.getElementById('strategy-state').textContent = `Strategy state: ${strategyState} | Mode: ${modeLabel}`;
         syncStrategyButtons(strategyState);
         renderStrategySummary(status);
         renderTable(
           document.getElementById('positions-strategy'),
           ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'Margin', 'Size', 'uPnL', 'Opened'],
-          strategy
-            ? [[
-                strategy.coin || '-',
-                strategy.side || '-',
-                money(strategy.entryPrice),
-                money(strategy.currentPrice),
-                strategy.stopLoss ? money(strategy.stopLoss) : '-',
-                strategy.takeProfit ? money(strategy.takeProfit) : '-',
-                (() => {
-                  const margin = resolveMargin(strategy, status?.strategy?.leverage || 0);
-                  return margin > 0 ? `${money(margin)} BOKS` : '-';
-                })(),
-                (() => {
-                  const size = resolveSize(strategy, status?.strategy?.leverage || 0);
-                  return size > 0 ? `${money(size)} BOKS` : '-';
-                })(),
-                `${Number(strategy.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(strategy.unrealizedPnl)} BOKS`,
-                tsMs(strategy.openedAt),
-              ]]
-            : [],
+          strategyPositions.map((strategy) => [
+            strategy.coin || '-',
+            strategy.side || '-',
+            money(strategy.entryPrice),
+            money(strategy.currentPrice),
+            strategy.stopLoss ? money(strategy.stopLoss) : '-',
+            strategy.takeProfit ? money(strategy.takeProfit) : '-',
+            (() => {
+              const margin = resolveMargin(strategy, status?.strategy?.leverage || 0);
+              return margin > 0 ? `${money(margin)} BOKS` : '-';
+            })(),
+            (() => {
+              const size = resolveSize(strategy, status?.strategy?.leverage || 0);
+              return size > 0 ? `${money(size)} BOKS` : '-';
+            })(),
+            `${Number(strategy.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(strategy.unrealizedPnl)} BOKS`,
+            tsMs(strategy.openedAt),
+          ]),
         );
         renderTable(
           document.getElementById('positions-manual'),
@@ -312,24 +332,59 @@
             })
             .join('');
         }
+
+        const strategySelector = document.getElementById('strategy-close-position');
+        strategySelector.innerHTML = '';
+        if (!strategyPositions.length) {
+          strategySelector.innerHTML = '<option value="">No strategy positions</option>';
+        } else {
+          strategySelector.innerHTML = strategyPositions
+            .map((p) => {
+              const pid = p.positionId || '';
+              const coin = p.coin || '-';
+              const entry = money(p.entryPrice);
+              const margin = (() => {
+                const v = resolveMargin(p, status?.strategy?.leverage || 0);
+                return v > 0 ? money(v) : '-';
+              })();
+              return `<option value="${pid}">${pid} | ${coin} | entry ${entry} | margin ${margin}</option>`;
+            })
+            .join('');
+        }
       }
 
       async function refreshStrategies() {
         const data = await fetchJson('/api/strategies');
         const items = Array.isArray(data.items) ? data.items : [];
         const active = (data.active || '').toUpperCase();
+        const mode = String(data.mode || 'single').toLowerCase();
+        const enabled = Array.isArray(data.enabled) ? data.enabled.map((x) => String(x || '').toUpperCase()) : [];
         const selector = document.getElementById('strategy-select');
-        selector.innerHTML = items
+        selector.innerHTML = [
+          '<option value="RUN_ALL">Run All Strategy Simultaneously</option>',
+          ...items
           .map((s) => `<option value="${s.id}">${s.label}</option>`)
+          ]
           .join('');
-        if (items.some((s) => s.id === active)) {
+        if (mode === 'all') {
+          selector.value = 'RUN_ALL';
+        } else if (items.some((s) => s.id === active)) {
           selector.value = active;
         }
-        const picked = items.find((s) => s.id === selector.value);
-        document.getElementById('strategy-entry-note').textContent = picked?.entry || '-';
+
+        const setStrategyNote = () => {
+          if (selector.value === 'RUN_ALL') {
+            document.getElementById('strategy-entry-note').textContent = 'Running All Strategies Simultaneously';
+            return;
+          }
+          const picked = items.find((s) => s.id === selector.value);
+          const modeText = mode === 'all' ? `Mode ALL: ${enabled.join(', ')}` : `Mode SINGLE: ${active || '-'}`;
+          document.getElementById('strategy-entry-note').textContent = `${picked?.entry || '-'} | ${modeText}`;
+        };
+
+        setStrategyNote();
         selector.onchange = () => {
-          const current = items.find((s) => s.id === selector.value);
-          document.getElementById('strategy-entry-note').textContent = current?.entry || '-';
+          setStrategyNote();
         };
       }
 
@@ -339,12 +394,20 @@
         btn.textContent = 'Applying...';
         try {
           const strategyId = document.getElementById('strategy-select').value || '';
-          const data = await fetchJson('/api/strategy/select', {
-            method: 'POST',
-            headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ strategy_id: strategyId }),
-          });
-          renderResult({ success: true, message: `Strategy applied: ${data.active}` }, false);
+          if (strategyId === 'RUN_ALL') {
+            const data = await fetchJson('/api/strategy/run-all', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+            });
+            renderResult({ success: true, message: `Run all strategy enabled: ${(data.enabled || []).join(', ')}` }, false);
+          } else {
+            const data = await fetchJson('/api/strategy/select', {
+              method: 'POST',
+              headers: { 'Content-Type': 'application/json' },
+              body: JSON.stringify({ strategy_id: strategyId }),
+            });
+            renderResult({ success: true, message: `Strategy applied: ${data.active}` }, false);
+          }
           await refreshStrategies();
           await refreshPositions();
         } catch (e) {
@@ -453,17 +516,26 @@
           renderResult({ success: false, message: String(e) }, true);
         } finally {
           btn.disabled = false;
-          btn.textContent = 'Close All Manual Pos';
+          btn.textContent = 'Close All Manual Positions';
         }
       }
 
       async function closeStrategyPosition() {
-        if (!confirm('Close strategy ETHUSDT position?')) return;
+        const positionId = document.getElementById('strategy-close-position').value || '';
+        if (!positionId) {
+          renderResult({ success: false, message: 'Please select strategy position first.' }, true);
+          return;
+        }
+        if (!confirm(`Close strategy position ${positionId}?`)) return;
         const btn = document.getElementById('btn-close-strategy');
         btn.disabled = true;
         btn.textContent = 'Closing Strategy...';
         try {
-          const data = await fetchJson('/api/manual/close-strategy-position', { method: 'POST' });
+          const data = await fetchJson('/api/manual/close-strategy-position', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ position_id: positionId }),
+          });
           renderResult(data, !data.success);
           await refreshPositions();
         } catch (e) {
@@ -471,6 +543,23 @@
         } finally {
           btn.disabled = false;
           btn.textContent = 'Close Strategy Position';
+        }
+      }
+
+      async function closeAllStrategyPositions() {
+        if (!confirm('Close ALL strategy-owned positions?')) return;
+        const btn = document.getElementById('btn-close-all-strategy');
+        btn.disabled = true;
+        btn.textContent = 'Closing All...';
+        try {
+          const data = await fetchJson('/api/manual/close-all-strategy-positions', { method: 'POST' });
+          renderResult(data, !data.success);
+          await refreshPositions();
+        } catch (e) {
+          renderResult({ success: false, message: String(e) }, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Close All Strategy Positions';
         }
       }
 
@@ -511,6 +600,7 @@
       document.getElementById('btn-close').addEventListener('click', closePosition);
       document.getElementById('btn-close-all-manual').addEventListener('click', closeAllManualPositions);
       document.getElementById('btn-close-strategy').addEventListener('click', closeStrategyPosition);
+      document.getElementById('btn-close-all-strategy').addEventListener('click', closeAllStrategyPositions);
       document.getElementById('btn-pause').addEventListener('click', pauseStrategy);
       document.getElementById('btn-resume').addEventListener('click', resumeStrategy);
       document.getElementById('btn-save-settings').addEventListener('click', saveSettings);

@@ -1,6 +1,6 @@
 # PROJECT_LOG
 
-Last updated: 2026-02-19 (auto-run dev stack rule)
+Last updated: 2026-02-25 (multi-strategy mode + TAOUSDT manual)
 Project: `zzCatBoktoshiTradingBot`
 
 ## 1) Project Intent
@@ -31,6 +31,16 @@ Build a deployable ETHUSDT trading bot with:
   - Chat log `/chatlog`
 
 ## 3) Trading Rules (Current)
+
+Latest runtime update (2026-02-25):
+
+- Strategy engine now supports 2 runtime modes from Manual page:
+  - `Apply Strategy` -> run single selected strategy.
+  - `Run All Strategy` -> run both MA50 + EMA/RSI simultaneously.
+- Both strategies are now evaluated on fixed symbol basket: `BTCUSDT`, `ETHUSDT`, `SOLUSDT`.
+- Pause/Resume remains global for strategy engine and preserves current mode on resume.
+- Manual symbol whitelist now includes `TAOUSDT`.
+- ASTER chart symbol pin list now includes `TAOUSDT` directly under `SOLUSDT`.
 
 - Pair: ETHUSDT only
 - Side: LONG only
@@ -1044,3 +1054,103 @@ When a new assistant session starts:
 - Verification snapshot:
   - tests: `20 passed`.
   - smoke endpoints: metrics, journal filters, summary filters, clear-stale queue all return `200`.
+
+## 48) Latest Update (2026-02-25)
+
+- Manual strategy-close exchange comment is now aligned with manual close comment text.
+  - Updated `POST /api/manual/close-strategy-position` in `app/main.py` to send:
+    - `zzCatzz has exit the Maxtrix. ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ`
+- Scope intentionally limited per request:
+  - only exchange-bound `comment` string changed,
+  - no changes to UI/API return message semantics.
+
+## 49) Latest Update (2026-02-25)
+
+- Updated close comments for both Manual and Strategy exits to a unified new phrase.
+  - New close comment:
+    - `The SuperBOT of zzCatzz has exited the ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ!`
+- Applied to all close endpoints in `app/main.py`:
+  - `POST /api/manual/close-position`
+  - `POST /api/manual/close-all-positions`
+  - `POST /api/manual/close-strategy-position`
+- Scope intentionally unchanged:
+  - only exchange-bound `comment` updated,
+  - UI/API return messages remain the same.
+
+## 50) Latest Update (2026-02-25)
+
+- Manual strategy control UX updated per operator request:
+  - Removed standalone `Run All Strategy` button from `/manual`.
+  - Added dropdown option: `Run All Strategy Simultaneously`.
+  - `Apply Strategy` now routes by selected value:
+    - `RUN_ALL` -> `POST /api/strategy/run-all`
+    - strategy id -> `POST /api/strategy/select`
+  - Strategy Note text when selecting run-all option is now:
+    - `Running All Strategies Simultaneously`
+
+## 51) Latest Update (2026-02-25)
+
+- Manual close UI on `/manual` was split into two separate cards:
+  - `CLOSE MANUAL POSITION`
+  - `CLOSE STRATEGY POSITION`
+- Strategy close controls now support both single-select close and bulk close:
+  - `POST /api/manual/close-strategy-position` now accepts optional JSON body `position_id` and closes the selected strategy-owned position.
+  - Added `POST /api/manual/close-all-strategy-positions` to close all strategy-owned positions in one action.
+- Backend strategy close flow in `BoktoshiBotModule/bot_runner.py` is no longer ETH-only:
+  - resolves strategy-owned IDs from `strategy_position_ids` map,
+  - supports BTCUSDT / ETHUSDT / SOLUSDT strategy positions,
+  - preserves per-position coin/side metadata in trade logs,
+  - returns aggregate close result for bulk flow (`closed`, `failed`, `closed_ids`, `errors`).
+- Regression coverage added in `tests/test_bot_runner_flows.py`:
+  - close selected strategy position,
+  - close all strategy positions across BTC/ETH/SOL.
+- Verification:
+  - `pytest tests/test_bot_runner_flows.py` => `12 passed`
+  - `pytest` => `22 passed`
+
+## 52) Latest Update (2026-02-25)
+
+- Renamed manual navigation tag across UI from `Manual Trade` to `Position Management`.
+  - Updated nav label in:
+    - `app/templates/index.html`
+    - `app/templates/manual.html`
+    - `app/templates/journal.html`
+    - `app/templates/eth_chart.html`
+    - `app/templates/aster_trading.html`
+    - `app/templates/strategy_summary.html`
+    - `app/templates/chatlog.html`
+- Added dedicated nav style for the Position Management tag:
+  - New class: `.nav-position-management`
+  - Light yellow background and matching active state in `app/static/app.css`.
+- Updated manual page identity text to match new naming:
+  - HTML title: `Position Management - zzCatBoktoshiTradingBot`
+  - Header title: `Position Management Console`
+
+## 53) Latest Update (2026-02-25)
+
+- Position Management UI refinement on `/manual`:
+  - moved `Close All Manual Positions` onto a new line under `Manual Close Position` in the `CLOSE MANUAL POSITION` card.
+  - renamed button label from `Close All Manual Pos` to `Close All Manual Positions`.
+  - synchronized JS button reset text to the new full label.
+- Navigation emphasis update:
+  - increased text weight for `.nav-position-management` in `app/static/app.css`.
+  - active state is now bolder for clearer visual priority.
+
+## 54) Latest Update (2026-02-25)
+
+- Reordered the top cards on `/manual` (Position Management) per operator UX preference.
+  - New order in the first grid row sequence:
+    1. `BOT SETTINGS`
+    2. `MANUAL TRADE PANEL`
+    3. `STRATEGY CONTROL`
+- Scope is layout-only reorder in `app/templates/manual.html`; control IDs and API wiring were kept unchanged.
+
+## 55) Latest Update (2026-02-25)
+
+- Per operator request, completed full housekeeping sync before shutdown:
+  - updated `AGENTS.md` to reflect current multi-symbol strategy scope and Position Management flows.
+  - aligned `AGENTS.md` runtime landmarks to current module location (`BoktoshiBotModule/bot_runner.py`).
+  - documented current high-use API set for strategy/manual close operations including selected/all strategy close endpoints.
+- Documentation continuity update:
+  - appended current request/response trace to `app/templates/chatlog.html`.
+  - retained chronological update chain in `PROJECT_LOG.md` for next-session fast resume.

@@ -155,6 +155,25 @@ class BotRunner:
             return value[:-4]
         return value
 
+    def _log_structured(self, ts: int, level: str, event: str, **fields: Any) -> None:
+        payload: Dict[str, Any] = {
+            "event": event,
+            "ts": int(ts),
+            "level": str(level).upper(),
+        }
+        for key, value in fields.items():
+            if value in (None, ""):
+                continue
+            payload[key] = value
+        add_log(self.db_path, ts, level, json.dumps(payload, ensure_ascii=True, sort_keys=True))
+
+    @staticmethod
+    def _close_external_id(position_id: str) -> str:
+        pid = str(position_id or "").strip()
+        if not pid:
+            return ""
+        return f"local-close:{pid}"
+
     def _owner_key(self, owner: str) -> str:
         if owner == "manual":
             return "manual_position_ids"
@@ -349,19 +368,38 @@ class BotRunner:
                 return pos
         return None
 
+    def _compact_position_snapshot(self, position: Optional[Dict[str, Any]]) -> Dict[str, Any]:
+        if not isinstance(position, dict):
+            return {}
+        return {
+            "positionId": str(position.get("positionId", "") or ""),
+            "coin": str(position.get("coin", "") or "").upper(),
+            "side": str(position.get("side", "") or "").upper(),
+            "entryPrice": _to_float(position.get("entryPrice", 0), 0.0),
+            "currentPrice": _to_float(position.get("currentPrice", 0), 0.0),
+            "markPrice": _to_float(position.get("markPrice", 0), 0.0),
+            "positionAmt": _to_float(position.get("positionAmt", 0), 0.0),
+            "sizeUsd": _to_float(position.get("size", position.get("positionSize", 0)), 0.0),
+            "margin": _to_float(position.get("margin", position.get("usedMargin", 0)), 0.0),
+            "leverage": _to_float(position.get("leverage", 0), 0.0),
+            "unrealizedPnl": _to_float(position.get("unrealizedPnl", 0), 0.0),
+            "stopLoss": _to_float(position.get("stopLoss", 0), 0.0),
+            "takeProfit": _to_float(position.get("takeProfit", 0), 0.0),
+        }
+
     def _sync_owned_position_ids(self, now: int, positions: List[Dict[str, Any]]) -> None:
         strategy_id = self._get_owner_position_id("strategy")
         manual_ids = self._get_manual_position_ids()
 
         if strategy_id and not self._find_position_by_id(positions, strategy_id):
             self._set_owner_position_id("strategy", "")
-            add_log(self.db_path, now, "INFO", f"Cleared stale strategy position id {strategy_id}.")
+            self._log_structured(now, "INFO", "stale_strategy_position_cleared", position_id=strategy_id)
 
         valid_manual_ids = [pid for pid in manual_ids if self._find_position_by_id(positions, pid)]
         cleared_ids = [pid for pid in manual_ids if pid not in valid_manual_ids]
         if cleared_ids:
             self._set_manual_position_ids(valid_manual_ids)
-            add_log(self.db_path, now, "INFO", f"Cleared stale manual position ids: {', '.join(cleared_ids)}")
+            self._log_structured(now, "INFO", "stale_manual_positions_cleared", position_ids=cleared_ids)
 
         strategy_id = self._get_owner_position_id("strategy")
         manual_ids = self._get_manual_position_ids()
@@ -711,12 +749,52 @@ class BotRunner:
             "positionId": position_id,
             "comment": comment,
         }
+        source_hint = "strategy" if owner == "strategy" else "manual"
+        close_mode = "strategy_auto"
+        positions = self._fetch_positions(now)
+        target = self._find_position_by_id(positions, position_id)
+        close_snapshot = self._compact_position_snapshot(target)
         if self.dry_run:
-            add_log(self.db_path, now, "INFO", f"DRY_RUN close {position_id}: {note}")
-            add_trade(self.db_path, now, "CLOSE", self.trade_coin, "LONG", self.margin_boks, self.leverage, "DRY_RUN", note)
+            self._log_structured(
+                now,
+                "INFO",
+                "close_dry_run",
+                position_id=position_id,
+                external_id=self._close_external_id(position_id),
+                note=note,
+                source=source_hint,
+                close_mode=close_mode,
+            )
+            add_trade(
+                self.db_path,
+                now,
+                "CLOSE",
+                self.trade_coin,
+                "LONG",
+                self.margin_boks,
+                self.leverage,
+                "DRY_RUN",
+                json.dumps(
+                    {
+                        "message": note,
+                        "positionId": position_id,
+                        "source": source_hint,
+                        "close_mode": close_mode,
+                        "comment": comment,
+                        "close_snapshot": close_snapshot,
+                    }
+                ),
+            )
             return
         if not self._can_send_trade(now):
-            add_log(self.db_path, now, "WARN", "Skipped close trade due to rate limit guard.")
+            self._log_structured(
+                now,
+                "WARN",
+                "close_rate_limited",
+                position_id=position_id,
+                source=source_hint,
+                close_mode=close_mode,
+            )
             return
         try:
             response = self.client.close_trade(payload)
@@ -729,13 +807,40 @@ class BotRunner:
                 self.margin_boks,
                 self.leverage,
                 "OK",
-                json.dumps(response),
+                json.dumps(
+                    {
+                        **(response if isinstance(response, dict) else {}),
+                        "positionId": position_id,
+                        "source": source_hint,
+                        "close_mode": close_mode,
+                        "note": note,
+                        "close_snapshot": close_snapshot,
+                    }
+                ),
             )
             if owner:
                 self._set_owner_position_id(owner, "")
-            add_log(self.db_path, now, "INFO", f"Closed position {position_id}: {note}")
+            self._log_structured(
+                now,
+                "INFO",
+                "close_submitted",
+                position_id=position_id,
+                external_id=self._close_external_id(position_id),
+                source=source_hint,
+                close_mode=close_mode,
+                note=note,
+            )
         except MTCClientError as exc:
-            add_log(self.db_path, now, "ERROR", f"Close trade failed: {exc} ({exc.code})")
+            self._log_structured(
+                now,
+                "ERROR",
+                "close_failed",
+                position_id=position_id,
+                source=source_hint,
+                close_mode=close_mode,
+                error=str(exc),
+                error_code=exc.code,
+            )
 
     def manual_force_open(self, side: str, symbol: str = "ETHUSDT", comment: str = "Manual force open") -> Dict[str, Any]:
         now = int(time.time())
@@ -774,7 +879,14 @@ class BotRunner:
         try:
             candles = self.hyperliquid.get_candles(target_coin, interval="4h", bars=5)
         except Exception as exc:
-            add_log(self.db_path, now, "ERROR", f"Manual force open failed to fetch candles: {exc}")
+            self._log_structured(
+                now,
+                "ERROR",
+                "manual_open_market_data_failed",
+                symbol=target_symbol,
+                side=target_side,
+                error=str(exc),
+            )
             return {"success": False, "message": f"Failed to fetch market data: {exc}"}
 
         if not candles:
@@ -836,7 +948,14 @@ class BotRunner:
                 "DRY_RUN",
                 json.dumps(payload),
             )
-            add_log(self.db_path, now, "INFO", f"DRY_RUN manual force open payload: {payload}")
+            self._log_structured(
+                now,
+                "INFO",
+                "manual_open_dry_run",
+                symbol=target_symbol,
+                side=target_side,
+                payload=payload,
+            )
             return {
                 "success": True,
                 "dry_run": True,
@@ -863,7 +982,14 @@ class BotRunner:
                 json.dumps(response),
             )
             self._capture_manual_position_id(now, positions, response, target_coin, target_side)
-            add_log(self.db_path, now, "INFO", f"Manual force open {target_side} success on {target_symbol}.")
+            self._log_structured(
+                now,
+                "INFO",
+                "manual_open_submitted",
+                symbol=target_symbol,
+                side=target_side,
+                position_id=str(response.get("positionId", "") or ""),
+            )
             return {
                 "success": True,
                 "dry_run": False,
@@ -884,7 +1010,15 @@ class BotRunner:
                 "ERROR",
                 f"{exc} ({exc.code})",
             )
-            add_log(self.db_path, now, "ERROR", f"Manual force open failed: {exc} ({exc.code})")
+            self._log_structured(
+                now,
+                "ERROR",
+                "manual_open_failed",
+                symbol=target_symbol,
+                side=target_side,
+                error=str(exc),
+                error_code=exc.code,
+            )
             return {"success": False, "message": f"Open failed: {exc}", "code": exc.code}
 
     def manual_force_open_long(self, symbol: str = "ETHUSDT", comment: str = "Manual force open") -> Dict[str, Any]:
@@ -918,6 +1052,7 @@ class BotRunner:
             return {"success": False, "message": "Manual position id is invalid."}
         position_coin = str(target.get("coin", "")).upper() or "UNKNOWN"
         position_side = str(target.get("side", "")).upper() or "UNKNOWN"
+        close_snapshot = self._compact_position_snapshot(target)
 
         if self.dry_run:
             add_trade(
@@ -929,9 +1064,24 @@ class BotRunner:
                 self.margin_boks,
                 self.leverage,
                 "DRY_RUN",
-                f"manual close {resolved_position_id}",
+                json.dumps(
+                    {
+                        "message": f"manual close {resolved_position_id}",
+                        "positionId": resolved_position_id,
+                        "source": "manual",
+                        "close_mode": "manual",
+                        "comment": comment,
+                        "close_snapshot": close_snapshot,
+                    }
+                ),
             )
-            add_log(self.db_path, now, "INFO", "DRY_RUN manual close for manual-owned position.")
+            self._log_structured(
+                now,
+                "INFO",
+                "manual_close_dry_run",
+                position_id=resolved_position_id,
+                external_id=self._close_external_id(resolved_position_id),
+            )
             return {
                 "success": True,
                 "dry_run": True,
@@ -954,13 +1104,34 @@ class BotRunner:
                 self.margin_boks,
                 self.leverage,
                 "OK",
-                json.dumps(response),
+                json.dumps(
+                    {
+                        **(response if isinstance(response, dict) else {}),
+                        "positionId": resolved_position_id,
+                        "source": "manual",
+                        "close_mode": "manual",
+                        "close_snapshot": close_snapshot,
+                    }
+                ),
             )
             self._set_manual_position_ids([pid for pid in manual_ids if pid != resolved_position_id])
-            add_log(self.db_path, now, "INFO", f"Manual close success for manual position {resolved_position_id}.")
+            self._log_structured(
+                now,
+                "INFO",
+                "manual_close_submitted",
+                position_id=resolved_position_id,
+                external_id=self._close_external_id(resolved_position_id),
+            )
             return {"success": True, "closed": 1, "message": "Closed manual position.", "position_id": resolved_position_id}
         except MTCClientError as exc:
-            add_log(self.db_path, now, "ERROR", f"Manual close failed {resolved_position_id}: {exc} ({exc.code})")
+            self._log_structured(
+                now,
+                "ERROR",
+                "manual_close_failed",
+                position_id=resolved_position_id,
+                error=str(exc),
+                error_code=exc.code,
+            )
             return {"success": False, "message": f"Close failed: {exc}", "code": exc.code}
 
     def manual_close_all_positions(self, comment: str = "Manual close all positions") -> Dict[str, Any]:
@@ -993,6 +1164,7 @@ class BotRunner:
                 continue
             position_coin = str(target.get("coin", "")).upper() or "UNKNOWN"
             position_side = str(target.get("side", "")).upper() or "UNKNOWN"
+            close_snapshot = self._compact_position_snapshot(target)
 
             if self.dry_run:
                 add_trade(
@@ -1004,7 +1176,16 @@ class BotRunner:
                     self.margin_boks,
                     self.leverage,
                     "DRY_RUN",
-                    f"manual close {position_id}",
+                    json.dumps(
+                        {
+                            "message": f"manual close {position_id}",
+                            "positionId": position_id,
+                            "source": "manual",
+                            "close_mode": "manual",
+                            "comment": comment,
+                            "close_snapshot": close_snapshot,
+                        }
+                    ),
                 )
                 closed_ids.append(position_id)
                 continue
@@ -1024,7 +1205,15 @@ class BotRunner:
                     self.margin_boks,
                     self.leverage,
                     "OK",
-                    json.dumps(response),
+                    json.dumps(
+                        {
+                            **(response if isinstance(response, dict) else {}),
+                            "positionId": position_id,
+                            "source": "manual",
+                            "close_mode": "manual",
+                            "close_snapshot": close_snapshot,
+                        }
+                    ),
                 )
                 closed_ids.append(position_id)
             except MTCClientError as exc:
@@ -1034,12 +1223,12 @@ class BotRunner:
             self._set_manual_position_ids([pid for pid in manual_ids if pid not in set(closed_ids)])
 
         if self.dry_run:
-            add_log(self.db_path, now, "INFO", f"DRY_RUN manual close all: simulated close {len(closed_ids)} positions.")
+            self._log_structured(now, "INFO", "manual_close_all_dry_run", closed_count=len(closed_ids), closed_ids=closed_ids)
         elif closed_ids:
-            add_log(self.db_path, now, "INFO", f"Manual close all success count={len(closed_ids)}.")
+            self._log_structured(now, "INFO", "manual_close_all_submitted", closed_count=len(closed_ids), closed_ids=closed_ids)
 
         if errors:
-            add_log(self.db_path, now, "WARN", f"Manual close all partial failures: {' | '.join(errors)}")
+            self._log_structured(now, "WARN", "manual_close_all_partial_failures", failed_count=len(errors), errors=errors)
 
         success = len(errors) == 0
         message = (
@@ -1075,6 +1264,7 @@ class BotRunner:
         position_id = str(target.get("positionId", ""))
         if not position_id:
             return {"success": False, "message": "Strategy position id is invalid."}
+        close_snapshot = self._compact_position_snapshot(target)
 
         if self.dry_run:
             add_trade(
@@ -1086,9 +1276,24 @@ class BotRunner:
                 self.margin_boks,
                 self.leverage,
                 "DRY_RUN",
-                f"strategy close {position_id}",
+                json.dumps(
+                    {
+                        "message": f"strategy close {position_id}",
+                        "positionId": position_id,
+                        "source": "strategy",
+                        "close_mode": "strategy_manual",
+                        "comment": comment,
+                        "close_snapshot": close_snapshot,
+                    }
+                ),
             )
-            add_log(self.db_path, now, "INFO", "DRY_RUN close strategy position request accepted.")
+            self._log_structured(
+                now,
+                "INFO",
+                "strategy_close_dry_run",
+                position_id=position_id,
+                external_id=self._close_external_id(position_id),
+            )
             return {"success": True, "dry_run": True, "message": "DRY_RUN simulated strategy position close.", "closed": 1}
 
         if not self._can_send_trade(now):
@@ -1105,24 +1310,45 @@ class BotRunner:
                 self.margin_boks,
                 self.leverage,
                 "OK",
-                json.dumps(response),
+                json.dumps(
+                    {
+                        **(response if isinstance(response, dict) else {}),
+                        "positionId": position_id,
+                        "source": "strategy",
+                        "close_mode": "strategy_manual",
+                        "close_snapshot": close_snapshot,
+                    }
+                ),
             )
             self._set_owner_position_id("strategy", "")
-            add_log(self.db_path, now, "INFO", f"Manual close success for strategy position {position_id}.")
+            self._log_structured(
+                now,
+                "INFO",
+                "strategy_close_manual_submitted",
+                position_id=position_id,
+                external_id=self._close_external_id(position_id),
+            )
             return {"success": True, "closed": 1, "message": "Closed strategy position."}
         except MTCClientError as exc:
-            add_log(self.db_path, now, "ERROR", f"Close strategy failed {position_id}: {exc} ({exc.code})")
+            self._log_structured(
+                now,
+                "ERROR",
+                "strategy_close_manual_failed",
+                position_id=position_id,
+                error=str(exc),
+                error_code=exc.code,
+            )
             return {"success": False, "message": f"Close failed: {exc}", "code": exc.code}
 
     def _maybe_open_long(self, now: int, account: Dict[str, Any], positions: List[Dict[str, Any]]) -> None:
         if self._owner_has_open_position("strategy", positions):
-            add_log(self.db_path, now, "INFO", f"Strategy position already open for {self.trade_coin}. No new entry.")
+            self._log_structured(now, "INFO", "strategy_entry_skipped_position_exists", symbol=self.trade_pair)
             return
         if self.active_strategy == self.STRATEGY_EMA_RSI and self._has_any_open_long_on_coin(positions, self.trade_coin):
-            add_log(self.db_path, now, "INFO", f"Open LONG already exists on {self.trade_coin}. EMA strategy keeps one position per symbol.")
+            self._log_structured(now, "INFO", "strategy_entry_skipped_long_exists", symbol=self.trade_pair, strategy=self.active_strategy)
             return
         if len(positions) >= self.max_positions:
-            add_log(self.db_path, now, "WARN", "Max positions reached. Skip entry.")
+            self._log_structured(now, "WARN", "strategy_entry_skipped_max_positions", max_positions=self.max_positions)
             return
 
         signal = {}
@@ -1144,29 +1370,35 @@ class BotRunner:
                 signal_timeframe = "4h"
                 signal_key = "last_entry_candle"
         except Exception as exc:
-            add_log(self.db_path, now, "ERROR", f"Hyperliquid candles fetch failed: {exc}")
+            self._log_structured(now, "ERROR", "strategy_entry_market_data_failed", strategy=self.active_strategy, error=str(exc))
             return
 
         add_signal(self.db_path, now, self.trade_coin, signal_timeframe, bool(signal.get("signal")), json.dumps(signal))
         set_kv(self.db_path, "last_signal", json.dumps(signal))
 
         if not signal.get("signal"):
-            add_log(self.db_path, now, "INFO", f"No entry signal: {signal.get('reason')}")
+            self._log_structured(
+                now,
+                "INFO",
+                "strategy_entry_skipped_no_signal",
+                strategy=self.active_strategy,
+                reason=str(signal.get("reason", "") or ""),
+            )
             return
 
         candle_key = str(int(_to_float(signal.get("last_candle_open_time", 0), 0.0)))
         if get_kv(self.db_path, signal_key, "") == candle_key:
-            add_log(self.db_path, now, "INFO", "Signal already traded for this candle.")
+            self._log_structured(now, "INFO", "strategy_entry_skipped_candle_already_traded", strategy=self.active_strategy, candle_key=candle_key)
             return
 
         capital = parse_total_capital(account)
         if capital <= 0:
-            add_log(self.db_path, now, "WARN", "Capital unavailable. Skip entry.")
+            self._log_structured(now, "WARN", "strategy_entry_skipped_no_capital", strategy=self.active_strategy)
             return
 
         entry_price = _to_float(signal.get("close", 0), 0.0)
         if entry_price <= 0:
-            add_log(self.db_path, now, "WARN", "Invalid entry price from candles.")
+            self._log_structured(now, "WARN", "strategy_entry_skipped_invalid_entry_price", strategy=self.active_strategy)
             return
 
         risk_targets = build_long_sl_tp_prices(
@@ -1193,7 +1425,7 @@ class BotRunner:
         }
 
         if self.dry_run:
-            add_log(self.db_path, now, "INFO", f"DRY_RUN open long payload: {payload}")
+            self._log_structured(now, "INFO", "strategy_open_dry_run", symbol=self.trade_pair, side="LONG", payload=payload)
             add_trade(
                 self.db_path,
                 now,
@@ -1209,7 +1441,7 @@ class BotRunner:
             return
 
         if not self._can_send_trade(now):
-            add_log(self.db_path, now, "WARN", "Skipped open trade due to rate limit guard.")
+            self._log_structured(now, "WARN", "strategy_open_rate_limited", symbol=self.trade_pair, side="LONG")
             return
 
         try:
@@ -1233,7 +1465,15 @@ class BotRunner:
                 if strategy_position:
                     self._ensure_ema_state(now, strategy_position, account)
             set_kv(self.db_path, signal_key, candle_key)
-            add_log(self.db_path, now, "INFO", f"Opened strategy long on {self.trade_coin}.")
+            position_id = str(response.get("positionId", "") or "")
+            self._log_structured(
+                now,
+                "INFO",
+                "strategy_open_submitted",
+                symbol=self.trade_pair,
+                side="LONG",
+                position_id=position_id,
+            )
         except MTCClientError as exc:
             add_trade(
                 self.db_path,
@@ -1246,7 +1486,15 @@ class BotRunner:
                 "ERROR",
                 f"{exc} ({exc.code})",
             )
-            add_log(self.db_path, now, "ERROR", f"Open trade failed: {exc} ({exc.code})")
+            self._log_structured(
+                now,
+                "ERROR",
+                "strategy_open_failed",
+                symbol=self.trade_pair,
+                side="LONG",
+                error=str(exc),
+                error_code=exc.code,
+            )
 
     def _maybe_daily_claim(self, now: int) -> None:
         if self.dry_run:

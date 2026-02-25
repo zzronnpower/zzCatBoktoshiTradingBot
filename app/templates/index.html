@@ -13,6 +13,7 @@
         <p>ETHUSDT-only MA50 4H strategy monitor.</p>
         <div class="nav-links">
           <a href="/" class="active">Dashboard</a>
+          <a href="/journal">Boktoshi Trading Journal</a>
           <a href="/manual">Manual Trade</a>
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
@@ -41,6 +42,13 @@
           <h2>Account Overview</h2>
           <div id="account" class="kv-list">Loading...</div>
         </div>
+        <div class="card">
+          <h2>System Health</h2>
+          <div class="btn-row" style="margin-bottom: 8px;">
+            <button id="clear-stale-btn" type="button" class="pager-btn">Clear Stale Pending Queue</button>
+          </div>
+          <div id="system-health" class="kv-list">Loading...</div>
+        </div>
       </section>
 
       <section class="grid">
@@ -54,6 +62,7 @@
         <div class="card">
           <h2>PnL History</h2>
           <div id="pnl">Loading...</div>
+          <div id="pnl-pager" class="pager-row"></div>
         </div>
       </section>
 
@@ -64,7 +73,11 @@
         </div>
         <div class="card">
           <h2>Trade History</h2>
+          <div class="btn-row" style="margin-bottom: 8px;">
+            <button id="history-refresh-btn" type="button" class="pager-btn">Refresh Finalized PnL</button>
+          </div>
           <div id="history">Loading...</div>
+          <div id="history-pager" class="pager-row"></div>
         </div>
       </section>
 
@@ -89,6 +102,30 @@
         const d = new Date(Number(ms));
         return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
       };
+      const signedMoney = (n) => {
+        const v = Number(n || 0);
+        return `${v >= 0 ? '+' : ''}${money(v)}`;
+      };
+
+      const PAGE_SIZE = {
+        history: 20,
+        pnl: 10,
+      };
+      const pagerState = {
+        history: 1,
+        pnl: 1,
+      };
+      const tableInteraction = {
+        history: { active: false, lastScrollAt: 0, scrollLeft: 0 },
+        pnl: { active: false, lastScrollAt: 0, scrollLeft: 0 },
+      };
+
+      function isTableInteracting(key) {
+        const state = tableInteraction[key];
+        if (!state) return false;
+        const now = Date.now();
+        return Boolean(state.active) || (now - Number(state.lastScrollAt || 0) < 1600);
+      }
 
       function resolveLeverage(position, fallbackLeverage = 0) {
         const lev = Number(position?.leverage ?? fallbackLeverage ?? 0);
@@ -139,6 +176,70 @@
         el.innerHTML = `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
       }
 
+      function renderPagedTable(rootEl, pagerEl, columns, rows, pagerKey) {
+        const pageSize = Number(PAGE_SIZE[pagerKey] || 20);
+        const total = rows.length;
+        const totalPages = Math.max(1, Math.ceil(total / pageSize));
+        const current = Math.min(Math.max(1, pagerState[pagerKey] || 1), totalPages);
+        pagerState[pagerKey] = current;
+        const start = (current - 1) * pageSize;
+        const pageRows = rows.slice(start, start + pageSize);
+        const previousWrap = rootEl.querySelector('.table-wrap');
+        const preservedScrollLeft = previousWrap
+          ? previousWrap.scrollLeft
+          : Number((tableInteraction[pagerKey] || {}).scrollLeft || 0);
+        renderTable(rootEl, columns, pageRows);
+
+        const nextWrap = rootEl.querySelector('.table-wrap');
+        const state = tableInteraction[pagerKey];
+        if (nextWrap && state) {
+          nextWrap.scrollLeft = preservedScrollLeft;
+          state.scrollLeft = preservedScrollLeft;
+          nextWrap.addEventListener('mouseenter', () => {
+            state.active = true;
+          });
+          nextWrap.addEventListener('mouseleave', () => {
+            state.active = false;
+          });
+          nextWrap.addEventListener('touchstart', () => {
+            state.active = true;
+          });
+          nextWrap.addEventListener('touchend', () => {
+            state.active = false;
+            state.lastScrollAt = Date.now();
+          });
+          nextWrap.addEventListener('touchcancel', () => {
+            state.active = false;
+            state.lastScrollAt = Date.now();
+          });
+          nextWrap.addEventListener('scroll', () => {
+            state.lastScrollAt = Date.now();
+            state.scrollLeft = nextWrap.scrollLeft;
+          });
+        }
+
+        if (!pagerEl) return;
+        if (total <= pageSize) {
+          pagerEl.innerHTML = '';
+          return;
+        }
+
+        pagerEl.innerHTML = `
+          <button type="button" class="pager-btn" data-key="${pagerKey}" data-dir="prev" ${current <= 1 ? 'disabled' : ''}>Prev</button>
+          <span class="pager-info">Page ${current}/${totalPages} - ${total} trades</span>
+          <button type="button" class="pager-btn" data-key="${pagerKey}" data-dir="next" ${current >= totalPages ? 'disabled' : ''}>Next</button>
+        `;
+        pagerEl.querySelectorAll('.pager-btn').forEach((btn) => {
+          btn.addEventListener('click', () => {
+            const key = btn.dataset.key;
+            const dir = btn.dataset.dir;
+            const delta = dir === 'next' ? 1 : -1;
+            pagerState[key] = Math.max(1, Math.min(totalPages, (pagerState[key] || 1) + delta));
+            renderPagedTable(rootEl, pagerEl, columns, rows, pagerKey);
+          });
+        });
+      }
+
       function renderLogs(el, items) {
         if (!items || !items.length) {
           el.innerHTML = '<p class="muted">No logs yet.</p>';
@@ -155,11 +256,11 @@
           .join('')}</ul>`;
       }
 
-      async function fetchJson(path, timeoutMs = 4500) {
+      async function fetchJson(path, timeoutMs = 4500, options = {}) {
         const controller = new AbortController();
         const t = setTimeout(() => controller.abort(), timeoutMs);
         try {
-          const response = await fetch(path, { cache: 'no-store', signal: controller.signal });
+          const response = await fetch(path, { cache: 'no-store', signal: controller.signal, ...options });
           if (!response.ok) {
             throw new Error(`${path} failed: ${response.status}`);
           }
@@ -181,20 +282,64 @@
 
       let refreshRunning = false;
       let refreshErrors = 0;
+      const renderHashes = {
+        history: '',
+        pnl: '',
+        signals: '',
+        logs: '',
+      };
+      const slowCache = {
+        history: null,
+        pnl: null,
+        signals: null,
+        logs: null,
+        lastFetchedAt: 0,
+        ttlMs: 15000,
+      };
 
       async function refresh() {
         if (refreshRunning) return;
         refreshRunning = true;
         try {
-          const [status, account, positions, history, pnl, signals, logs] = await Promise.all([
+          const [status, account, positions, metrics] = await Promise.all([
             fetchJson('/api/status'),
             fetchJson('/api/account'),
             fetchJson('/api/open-positions'),
-            fetchJson('/api/trade-history'),
-            fetchJson('/api/pnl-history'),
-            fetchJson('/api/signals'),
-            fetchJson('/api/logs'),
+            fetchJson('/api/system/metrics'),
           ]);
+
+          const nowMs = Date.now();
+          const needSlowRefresh =
+            !slowCache.history ||
+            !slowCache.pnl ||
+            !slowCache.signals ||
+            !slowCache.logs ||
+            nowMs - Number(slowCache.lastFetchedAt || 0) >= Number(slowCache.ttlMs || 15000);
+
+          if (needSlowRefresh) {
+            try {
+              const [history, pnl, signals, logs] = await Promise.all([
+                fetchJson('/api/trade-history'),
+                fetchJson('/api/pnl-history'),
+                fetchJson('/api/signals'),
+                fetchJson('/api/logs'),
+              ]);
+              slowCache.history = history;
+              slowCache.pnl = pnl;
+              slowCache.signals = signals;
+              slowCache.logs = logs;
+              slowCache.lastFetchedAt = nowMs;
+            } catch (slowErr) {
+              if (!slowCache.history || !slowCache.pnl || !slowCache.signals || !slowCache.logs) {
+                throw slowErr;
+              }
+            }
+          }
+
+          const history = slowCache.history || { closed_trades: [] };
+          const pnl = slowCache.pnl || { items: [] };
+          const signals = slowCache.signals || { items: [] };
+          const logs = slowCache.logs || { items: [] };
 
           const accountData = account.account || {};
           const boks = accountData.boks || {};
@@ -230,6 +375,21 @@
             { key: 'Available', value: `${money(boks.availableBalance)} BOKS` },
             { key: 'Total trades', value: `${accountData?.stats?.totalTrades || 0}` },
             { key: 'Win rate', value: `${((accountData?.stats?.winRate || 0) * 100).toFixed(2)}%` },
+          ]);
+
+          const m = metrics.metrics || {};
+          const req = m.requests || {};
+          const tradeReq = req['/api/trade-history'] || {};
+          const journalReq = req['/api/journal'] || req['/api/journal?page=1&page_size=20'] || {};
+          const sync = m.journal_sync || {};
+          const remote = m.remote_history || {};
+          renderKV(document.getElementById('system-health'), [
+            { key: 'Pending finalize queue', value: `${m.pending_finalize_count || 0}` },
+            { key: 'TradeHistory avg/max', value: `${money(tradeReq.avg_ms || 0)}ms / ${money(tradeReq.max_ms || 0)}ms` },
+            { key: 'Journal avg/max', value: `${money(journalReq.avg_ms || 0)}ms / ${money(journalReq.max_ms || 0)}ms` },
+            { key: 'Last sync duration', value: `${money(sync.last_duration_ms || 0)}ms` },
+            { key: 'Sync errors', value: `${sync.errors || 0}` },
+            { key: 'Remote fetch errors', value: `${remote.fetch_errors || 0}` },
           ]);
 
         renderTable(
@@ -280,47 +440,91 @@
           ]),
         );
 
-          renderTable(
-            document.getElementById('history'),
-            ['Time', 'Action', 'Coin', 'Side', 'Margin', 'Lev', 'Status'],
-            (history.local_exec || []).slice(0, 20).map((t) => [
-              ts(t.ts),
-              t.action || '-',
-              t.coin || '-',
+          const historyRows = (history.closed_trades || []).map((t) => {
+            const realized = t.display_realized_pnl;
+            const sourceCell = `${t.source_label || '-'}${t.recovered ? ` <span class="recovered-chip" title="${(t.close_reason || 'Recovered close').replace(/"/g, '&quot;')}">Recovered</span>` : ''}`;
+            const pnlCell = realized == null
+              ? `<span class="muted" title="Waiting for finalized close data from server history">Pending settlement</span>`
+              : `<span class="${Number(realized) >= 0 ? 'up' : 'down'}">${signedMoney(realized)} BOKS</span>${t.realized_estimated ? ' <span class="recovered-chip" title="Estimated from latest market data while waiting server finalization">Estimated</span>' : ''}`;
+            const exitDisplay = t.display_exit_price;
+            const exitCell = exitDisplay == null
+              ? '-'
+              : `${money(exitDisplay)}${t.exit_estimated ? ' <span class="recovered-chip" title="Estimated exit from market snapshot/price hints">Est</span>' : ''}`;
+            return [
+              ts(t.close_ts || t.ts),
+              t.symbol || t.coin || '-',
               t.side || '-',
-              money(t.margin),
-              `x${money(t.leverage)}`,
-              t.status || '-',
+              t.entry_price != null ? money(t.entry_price) : '-',
+              exitCell,
+              t.size_boks != null ? `${money(t.size_boks)} BOKS` : '-',
+              pnlCell,
+              sourceCell,
+            ];
+          });
+          const historyHash = JSON.stringify(
+            (history.closed_trades || []).map((t) => [
+              t.external_id,
+              t.display_exit_price,
+              t.display_realized_pnl,
+              t.pending,
+              t.source_label,
+              t.recovered,
             ]),
           );
+          if (!isTableInteracting('history') && (historyHash !== renderHashes.history || !document.getElementById('history').querySelector('table'))) {
+            renderPagedTable(
+              document.getElementById('history'),
+              document.getElementById('history-pager'),
+              ['Closed Time', 'Symbol', 'Side', 'Entry', 'Exit', 'Size (BOKS)', 'Realized PnL', 'Source'],
+              historyRows,
+              'history',
+            );
+            renderHashes.history = historyHash;
+          }
 
-          renderTable(
-            document.getElementById('pnl'),
-            ['Time', 'Equity', 'Balance', 'uPnL'],
-            (pnl.items || []).slice(0, 20).map((r) => [
-              ts(r.ts),
-              `${money(r.total_equity)} BOKS`,
-              `${money(r.balance)} BOKS`,
-              `${Number(r.unrealized || 0) >= 0 ? '+' : ''}${money(r.unrealized)} BOKS`,
-            ]),
-          );
+          const pnlRows = (pnl.items || []).map((r) => [
+            ts(r.ts),
+            `${money(r.total_equity)} BOKS`,
+            `${money(r.balance)} BOKS`,
+            `${Number(r.unrealized || 0) >= 0 ? '+' : ''}${money(r.unrealized)} BOKS`,
+          ]);
+          const pnlHash = JSON.stringify((pnl.items || []).map((r) => [r.ts, r.total_equity, r.balance, r.unrealized]));
+          if (pnlHash !== renderHashes.pnl || !document.getElementById('pnl').querySelector('table')) {
+            renderPagedTable(
+              document.getElementById('pnl'),
+              document.getElementById('pnl-pager'),
+              ['Time', 'Equity', 'Balance', 'uPnL'],
+              pnlRows,
+              'pnl',
+            );
+            renderHashes.pnl = pnlHash;
+          }
 
-          renderTable(
-            document.getElementById('signals'),
-            ['Time', 'Coin', 'TF', 'Signal', 'Reason'],
-            (signals.items || []).slice(0, 20).map((s) => {
-              let reason = '-';
-              try {
-                const details = JSON.parse(s.details || '{}');
-                reason = details.reason || '-';
-              } catch (e) {
-                reason = '-';
-              }
-              return [ts(s.ts), s.coin || '-', s.timeframe || '-', s.signal ? 'YES' : 'NO', reason];
-            }),
-          );
+          const signalRows = (signals.items || []).slice(0, 20).map((s) => {
+            let reason = '-';
+            try {
+              const details = JSON.parse(s.details || '{}');
+              reason = details.reason || '-';
+            } catch (e) {
+              reason = '-';
+            }
+            return [ts(s.ts), s.coin || '-', s.timeframe || '-', s.signal ? 'YES' : 'NO', reason];
+          });
+          const signalsHash = JSON.stringify((signals.items || []).slice(0, 50).map((s) => [s.ts, s.coin, s.timeframe, s.signal, s.details]));
+          if (signalsHash !== renderHashes.signals || !document.getElementById('signals').querySelector('table')) {
+            renderTable(
+              document.getElementById('signals'),
+              ['Time', 'Coin', 'TF', 'Signal', 'Reason'],
+              signalRows,
+            );
+            renderHashes.signals = signalsHash;
+          }
 
-          renderLogs(document.getElementById('logs'), logs.items || []);
+          const logsHash = JSON.stringify((logs.items || []).slice(0, 80).map((l) => [l.ts, l.level, l.message]));
+          if (logsHash !== renderHashes.logs || !document.getElementById('logs').querySelector('ul')) {
+            renderLogs(document.getElementById('logs'), logs.items || []);
+            renderHashes.logs = logsHash;
+          }
 
           const now = new Date();
           setLiveState('ok', `Live - Last update: ${now.toLocaleTimeString()}`);
@@ -336,6 +540,43 @@
 
       refresh();
       setInterval(refresh, 3000);
+
+      const historyRefreshBtn = document.getElementById('history-refresh-btn');
+      if (historyRefreshBtn) {
+        historyRefreshBtn.addEventListener('click', async () => {
+          historyRefreshBtn.disabled = true;
+          historyRefreshBtn.textContent = 'Refreshing...';
+          try {
+            await fetchJson('/api/journal/refresh', 10000, { method: 'POST' });
+            slowCache.lastFetchedAt = 0;
+            await refresh();
+          } catch (err) {
+            setLiveState('warn', `Refresh failed: ${String(err)}`);
+          } finally {
+            historyRefreshBtn.disabled = false;
+            historyRefreshBtn.textContent = 'Refresh Finalized PnL';
+          }
+        });
+      }
+
+      const clearStaleBtn = document.getElementById('clear-stale-btn');
+      if (clearStaleBtn) {
+        clearStaleBtn.addEventListener('click', async () => {
+          clearStaleBtn.disabled = true;
+          clearStaleBtn.textContent = 'Clearing...';
+          try {
+            const result = await fetchJson('/api/journal/clear-stale-pending?max_age_sec=86400', 10000, { method: 'POST' });
+            slowCache.lastFetchedAt = 0;
+            await refresh();
+            setLiveState('ok', `Cleared stale queue: removed ${result.removed || 0} entries`);
+          } catch (err) {
+            setLiveState('warn', `Clear stale failed: ${String(err)}`);
+          } finally {
+            clearStaleBtn.disabled = false;
+            clearStaleBtn.textContent = 'Clear Stale Pending Queue';
+          }
+        });
+      }
     </script>
     <script src="/static/theme.js"></script>
   </body>

@@ -19,6 +19,8 @@
       .overlay-toggle { border:1px solid var(--line); background:rgba(255,255,255,.04); color:var(--text); padding:6px 10px; border-radius:8px; cursor:pointer; }
       .overlay-toggle.on { border-color: #89e6a8; color:#89e6a8; }
       .overlay-note { color: var(--muted); font-size: 12px; }
+      .openpos-note { color: var(--muted); font-size: 12px; line-height: 1.35; }
+      .openpos-upnl { color: #f29c62; font-weight: 700; white-space: nowrap; }
       .symbol-group { display: flex; gap: 8px; align-items: center; flex-wrap: wrap; }
       .symbol-group input, .symbol-group select {
         border: 1px solid var(--line);
@@ -67,6 +69,7 @@
         <p>Live futures chart and orderbook with ASTER USDT symbols.</p>
         <div class="nav-links">
           <a href="/">Dashboard</a>
+          <a href="/journal">Boktoshi Trading Journal</a>
           <a href="/manual">Manual Trade</a>
           <a href="/aster-chart" class="active">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
@@ -92,15 +95,21 @@
             </div>
             <div class="tf-group" id="tf-group">
               <button class="tf-btn" data-tf="1m">1m</button>
-              <button class="tf-btn active" data-tf="5m">5m</button>
+              <button class="tf-btn" data-tf="5m">5m</button>
               <button class="tf-btn" data-tf="15m">15m</button>
               <button class="tf-btn" data-tf="1h">1h</button>
-              <button class="tf-btn" data-tf="4h">4h</button>
+              <button class="tf-btn active" data-tf="4h">4h</button>
               <button class="tf-btn" data-tf="1d">1d</button>
+              <button class="tf-btn" data-tf="3d">3D</button>
+              <button class="tf-btn" data-tf="1w">1W</button>
             </div>
             <div class="overlay-ctrl">
               <button id="overlay-toggle" class="overlay-toggle" type="button">Overlay OFF</button>
               <div class="overlay-note" id="overlay-status">Strategy overlay: OFF</div>
+            </div>
+            <div class="overlay-ctrl">
+              <button id="openpos-overlay-toggle" class="overlay-toggle" type="button">Open Position Overlay OFF</button>
+              <div class="openpos-note" id="openpos-status">Open position overlay: OFF</div>
             </div>
             <div class="live-mini" id="chart-status">Loading...</div>
           </div>
@@ -123,7 +132,7 @@
     <script>
       let selectedSymbol = 'ETHUSDT';
       let allSymbols = [];
-      let timeframe = '5m';
+      let timeframe = '4h';
       let nextFundingTime = 0;
       let chart;
       let candleSeries;
@@ -142,13 +151,23 @@
       let wsBackoffMs = 1000;
       let wsConnected = false;
       let wsStreamSymbol = '';
+      let wsStreamTimeframe = '';
       let lastWsDepthAt = 0;
+      let lastWsKlineAt = 0;
       let overlayEnabled = false;
       let overlayIntervalId = null;
       let overlayTopSymbols = [];
+      let positionOverlayEnabled = true;
+      let positionOverlayIntervalId = null;
+      let positionPriceLines = [];
+      let fitContentPending = true;
 
       const nf = (n, max = 2) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: max });
       const money = (n) => nf(n, 2);
+      const signedMoney = (n) => {
+        const v = Number(n || 0);
+        return `${v > 0 ? '+' : ''}${money(v)}`;
+      };
       const pct = (n) => `${Number(n || 0).toFixed(3)}%`;
       const fmtLarge = (n) => {
         const v = Number(n || 0);
@@ -275,6 +294,48 @@
           clearInterval(overlayIntervalId);
           overlayIntervalId = null;
         }
+      }
+
+      function updateOpenPositionOverlayToggleUi() {
+        const btn = document.getElementById('openpos-overlay-toggle');
+        if (!btn) return;
+        btn.textContent = positionOverlayEnabled ? 'Open Position Overlay ON' : 'Open Position Overlay OFF';
+        btn.classList.toggle('on', positionOverlayEnabled);
+      }
+
+      function clearOpenPositionOverlay() {
+        positionPriceLines.forEach((line) => {
+          try {
+            candleSeries.removePriceLine(line);
+          } catch (_) {}
+        });
+        positionPriceLines = [];
+      }
+
+      function stopOpenPositionOverlayTimer() {
+        if (positionOverlayIntervalId) {
+          clearInterval(positionOverlayIntervalId);
+          positionOverlayIntervalId = null;
+        }
+      }
+
+      function startOpenPositionOverlayTimer() {
+        stopOpenPositionOverlayTimer();
+        if (!positionOverlayEnabled) return;
+        positionOverlayIntervalId = setInterval(() => refreshOpenPositionOverlay().catch(() => {}), 3000);
+      }
+
+      function setOpenPositionOverlayEnabled(enabled) {
+        positionOverlayEnabled = Boolean(enabled);
+        updateOpenPositionOverlayToggleUi();
+        if (!positionOverlayEnabled) {
+          stopOpenPositionOverlayTimer();
+          clearOpenPositionOverlay();
+          document.getElementById('openpos-status').textContent = 'Open position overlay: OFF';
+          return;
+        }
+        refreshOpenPositionOverlay().catch(() => {});
+        startOpenPositionOverlayTimer();
       }
 
       function startOverlayRefreshTimer() {
@@ -441,6 +502,9 @@
 
       async function refreshKlines() {
         if (inFlightKline) return;
+        if (!fitContentPending && wsConnected && (Date.now() - lastWsKlineAt) < 15000) {
+          return;
+        }
         inFlightKline = true;
         const symbol = selectedSymbol;
         document.getElementById('chart-status').textContent = `Loading ${symbol} ${timeframe} candles...`;
@@ -462,7 +526,10 @@
           }));
           candleSeries.setData(candles);
           volumeSeries.setData(vols);
-          chart.timeScale().fitContent();
+          if (fitContentPending) {
+            chart.timeScale().fitContent();
+            fitContentPending = false;
+          }
           const status = document.getElementById('chart-status');
           status.className = 'live-mini mini-ok';
           status.textContent = `Live ${symbol} ${timeframe} - ${new Date().toLocaleTimeString()}`;
@@ -545,8 +612,10 @@
           disconnectDepthStream();
         }
         const sym = selectedSymbol.toLowerCase();
+        const wsTf = String(timeframe || '4h').toLowerCase();
         wsStreamSymbol = selectedSymbol;
-        const streams = `${sym}@depth10@100ms/${sym}@markPrice@1s`;
+        wsStreamTimeframe = wsTf;
+        const streams = `${sym}@depth10@100ms/${sym}@markPrice@1s/${sym}@kline_${wsTf}`;
         const wsUrl = `wss://fstream.asterdex.com/stream?streams=${streams}`;
         const s = document.getElementById('book-status');
         s.className = 'live-mini mini-warn';
@@ -593,6 +662,32 @@
 
           if (stream.includes('@markprice') || data.e === 'markPriceUpdate') {
             applyMarkStream(data);
+            return;
+          }
+
+          if (stream.includes('@kline_') || data.e === 'kline') {
+            if (wsStreamTimeframe !== timeframe) return;
+            const k = data.k && typeof data.k === 'object' ? data.k : data;
+            const barOpenTime = Number(k.t || 0);
+            if (!(barOpenTime > 0)) return;
+            const point = {
+              time: Math.floor(barOpenTime / 1000),
+              open: Number(k.o || 0),
+              high: Number(k.h || 0),
+              low: Number(k.l || 0),
+              close: Number(k.c || 0),
+            };
+            const volPoint = {
+              time: Math.floor(barOpenTime / 1000),
+              value: Number(k.v || 0),
+              color: Number(k.c || 0) >= Number(k.o || 0) ? 'rgba(98,220,164,.45)' : 'rgba(255,107,125,.45)',
+            };
+            candleSeries.update(point);
+            volumeSeries.update(volPoint);
+            lastWsKlineAt = Date.now();
+            const status = document.getElementById('chart-status');
+            status.className = 'live-mini mini-ok';
+            status.textContent = `Live ${selectedSymbol} ${timeframe} (ws) - ${new Date().toLocaleTimeString()}`;
           }
         };
 
@@ -642,28 +737,130 @@
             group.querySelectorAll('.tf-btn').forEach((b) => b.classList.remove('active'));
             btn.classList.add('active');
             timeframe = btn.dataset.tf;
+            fitContentPending = true;
+            lastWsKlineAt = 0;
+            connectDepthStream();
             await refreshKlines();
             await refreshStrategyOverlay();
           });
         });
       }
 
+      function normalizeSymbolCoin(symbol) {
+        const raw = String(symbol || '').toUpperCase().trim();
+        if (!raw) return '';
+        if (raw.endsWith('USDT')) return raw.slice(0, -4);
+        return raw;
+      }
+
+      function pickPositionCoin(pos) {
+        const coin = String(pos && pos.coin ? pos.coin : '').toUpperCase().trim();
+        if (coin) return coin;
+        const symbol = String(pos && pos.symbol ? pos.symbol : '').toUpperCase().trim();
+        return normalizeSymbolCoin(symbol);
+      }
+
+      function collectOpenPositionsForSelectedSymbol(data) {
+        const targetCoin = normalizeSymbolCoin(selectedSymbol);
+        const strategyRaw = data && typeof data === 'object' ? data.strategy_position : null;
+        const manualRaw = data && typeof data === 'object' && Array.isArray(data.manual_positions)
+          ? data.manual_positions
+          : [];
+        const merged = [];
+        if (strategyRaw && typeof strategyRaw === 'object') {
+          merged.push({ owner: 'strategy', ...strategyRaw });
+        }
+        manualRaw.forEach((p) => {
+          if (p && typeof p === 'object') {
+            merged.push({ owner: 'manual', ...p });
+          }
+        });
+        return merged.filter((p) => pickPositionCoin(p) === targetCoin);
+      }
+
+      function sideColor(side, type) {
+        const s = String(side || '').toUpperCase();
+        if (type === 'entry') return s === 'SHORT' ? '#ff9da8' : '#6fd3a8';
+        if (type === 'sl') return '#ff8e8e';
+        if (type === 'tp') return '#ffd88f';
+        return '#9fd9ff';
+      }
+
+      function addPositionPriceLine(price, color, title) {
+        const p = Number(price || 0);
+        if (!(p > 0)) return;
+        const line = candleSeries.createPriceLine({
+          price: p,
+          color,
+          lineWidth: 1,
+          lineStyle: 2,
+          axisLabelVisible: true,
+          title,
+        });
+        positionPriceLines.push(line);
+      }
+
+      function renderOpenPositionOverlay(positions) {
+        clearOpenPositionOverlay();
+        const status = document.getElementById('openpos-status');
+        if (!positions.length) {
+          status.textContent = `Open position overlay: ON | no open position on ${selectedSymbol}`;
+          return;
+        }
+
+        const summaryRows = [];
+        positions.forEach((p) => {
+          const owner = String(p.owner || 'manual').toUpperCase();
+          const side = String(p.side || 'LONG').toUpperCase();
+          const entry = Number(p.entryPrice || 0);
+          const sl = Number(p.stopLoss || 0);
+          const tp = Number(p.takeProfit || 0);
+          const upnl = Number(p.unrealizedPnl || 0);
+          addPositionPriceLine(entry, sideColor(side, 'entry'), `${owner} ${side} Entry`);
+          addPositionPriceLine(sl, sideColor(side, 'sl'), `${owner} ${side} SL`);
+          addPositionPriceLine(tp, sideColor(side, 'tp'), `${owner} ${side} TP`);
+          summaryRows.push(`<span class="openpos-upnl">${owner} ${side} uPnL: ${signedMoney(upnl)} BOKS</span>`);
+        });
+        status.innerHTML = summaryRows.join('<br/>');
+      }
+
+      async function refreshOpenPositionOverlay() {
+        if (!positionOverlayEnabled) {
+          clearOpenPositionOverlay();
+          return;
+        }
+        try {
+          const data = await fetchJson('/api/open-positions', 6000);
+          const positions = collectOpenPositionsForSelectedSymbol(data);
+          renderOpenPositionOverlay(positions);
+        } catch (e) {
+          clearOpenPositionOverlay();
+          document.getElementById('openpos-status').textContent = `Open position overlay delayed (${e})`;
+        }
+      }
+
       function bindSymbolControls() {
         const search = document.getElementById('symbol-search');
         const select = document.getElementById('symbol-select');
         const overlayToggle = document.getElementById('overlay-toggle');
+        const openPosOverlayToggle = document.getElementById('openpos-overlay-toggle');
         search.addEventListener('input', () => {
           renderSymbolOptions(search.value || '');
         });
         overlayToggle.addEventListener('click', () => {
           setOverlayEnabled(!overlayEnabled);
         });
+        openPosOverlayToggle.addEventListener('click', () => {
+          setOpenPositionOverlayEnabled(!positionOverlayEnabled);
+        });
         select.addEventListener('change', async () => {
           setSymbol(select.value || 'ETHUSDT');
+          fitContentPending = true;
           connectDepthStream();
           await refreshOverview();
           await refreshKlines();
           await refreshStrategyOverlay();
+          await refreshOpenPositionOverlay();
           await refreshDepth();
         });
       }
@@ -677,17 +874,22 @@
         bindSymbolControls();
         await loadSymbols();
         setOverlayEnabled(false);
+        setOpenPositionOverlayEnabled(true);
         await refreshOverview();
         await refreshKlines();
         if (overlayEnabled) {
           await refreshStrategyOverlay();
         }
+        if (positionOverlayEnabled) {
+          await refreshOpenPositionOverlay();
+        }
         connectDepthStream();
         await refreshDepth();
         setInterval(() => refreshOverview().catch(() => {}), 3000);
         setInterval(() => refreshDepth().catch(() => {}), 2000);
-        setInterval(() => refreshKlines().catch(() => {}), 12000);
+        setInterval(() => refreshKlines().catch(() => {}), 30000);
         startOverlayRefreshTimer();
+        startOpenPositionOverlayTimer();
       }
 
       boot().catch((e) => {

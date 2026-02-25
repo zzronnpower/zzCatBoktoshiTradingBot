@@ -1,0 +1,408 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Boktoshi Trading Journal</title>
+    <link rel="stylesheet" href="/static/app.css" />
+    <style>
+      .journal-card {
+        border: 1px solid rgba(99, 215, 176, 0.3);
+        background: linear-gradient(145deg, rgba(17, 34, 58, 0.94) 0%, rgba(19, 45, 67, 0.94) 55%, rgba(16, 28, 49, 0.98) 100%);
+      }
+      .journal-toolbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 12px;
+        margin-bottom: 12px;
+        flex-wrap: wrap;
+      }
+      .journal-inputs {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+        flex-wrap: wrap;
+      }
+      .journal-inputs label {
+        color: var(--muted);
+        font-size: 13px;
+      }
+      .journal-inputs input,
+      .journal-inputs select {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--input-bg);
+        color: var(--text);
+        padding: 8px 10px;
+      }
+      .pnl-chip {
+        display: inline-block;
+        padding: 2px 8px;
+        border-radius: 7px;
+        font-weight: 700;
+      }
+      .pnl-chip.up {
+        background: rgba(99, 215, 176, 0.2);
+      }
+      .pnl-chip.down {
+        background: rgba(255, 142, 142, 0.2);
+      }
+      .journal-summary {
+        display: grid;
+        grid-template-columns: repeat(auto-fit, minmax(140px, 1fr));
+        gap: 10px;
+        margin-top: 12px;
+      }
+      .summary-item {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 10px;
+        background: rgba(255, 255, 255, 0.03);
+      }
+      .summary-item span {
+        display: block;
+        font-size: 11px;
+        color: var(--muted);
+        text-transform: uppercase;
+      }
+      .summary-item strong {
+        font-size: 18px;
+      }
+      .opt-btn {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.04);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 6px 8px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .note-view {
+        display: flex;
+        align-items: center;
+        gap: 8px;
+      }
+      .note-text {
+        color: var(--text);
+      }
+      .note-editor {
+        display: none;
+        gap: 6px;
+        align-items: center;
+      }
+      .note-editor.active {
+        display: flex;
+      }
+      .note-editor input {
+        min-width: 220px;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: var(--input-bg);
+        color: var(--text);
+        padding: 6px 8px;
+      }
+      .note-editing .note-view {
+        display: none;
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <h1>Boktoshi Trading Journal</h1>
+        <p>Closed-trade journal with Entry, Exit, Qty, and realized PnL.</p>
+        <div class="nav-links">
+          <a href="/">Dashboard</a>
+          <a href="/journal" class="active">Boktoshi Trading Journal</a>
+          <a href="/manual">Manual Trade</a>
+          <a href="/aster-chart">ASTER Chart</a>
+          <a href="/aster-trading">AsterTrading</a>
+          <a href="/chatlog">ChatLog</a>
+        </div>
+      </header>
+
+      <section class="card journal-card">
+        <div class="journal-toolbar">
+          <div class="journal-inputs">
+            <label for="journal-page-size">Show</label>
+            <select id="journal-page-size">
+              <option value="20">20</option>
+              <option value="50">50</option>
+              <option value="100">100</option>
+            </select>
+            <label>entries</label>
+          </div>
+          <div class="journal-inputs">
+            <label for="journal-search">Search notes/tags:</label>
+            <input id="journal-search" type="text" placeholder="Type to search" />
+            <label for="journal-source-filter">Source:</label>
+            <select id="journal-source-filter">
+              <option value="all">All</option>
+              <option value="manual">Manual</option>
+              <option value="strategy">Strategy</option>
+              <option value="stra closed manually">Stra closed Manually</option>
+            </select>
+            <label for="journal-state-filter">State:</label>
+            <select id="journal-state-filter">
+              <option value="ALL">All</option>
+              <option value="PENDING">Pending</option>
+              <option value="ESTIMATED">Estimated</option>
+              <option value="FINALIZED">Finalized</option>
+            </select>
+            <label for="journal-recovered-filter">Recovered:</label>
+            <select id="journal-recovered-filter">
+              <option value="all">All</option>
+              <option value="true">Recovered only</option>
+              <option value="false">Non-recovered</option>
+            </select>
+            <button id="journal-refresh-btn" class="opt-btn" type="button">Refresh Finalized PnL</button>
+            <button id="journal-search-btn" class="opt-btn" type="button">Search</button>
+            <button id="journal-clear-btn" class="opt-btn" type="button">Clear</button>
+          </div>
+        </div>
+
+        <div id="journal-table">Loading...</div>
+        <div id="journal-pager" class="pager-row"></div>
+
+        <div class="journal-summary" id="journal-summary"></div>
+      </section>
+    </div>
+
+    <script>
+      const state = {
+        page: 1,
+        pageSize: 20,
+        pages: 1,
+        total: 0,
+        search: '',
+        source: 'all',
+        finalizationState: 'ALL',
+        recovered: 'all',
+      };
+
+      const money = (n) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+      const qtyText = (n) => (n == null ? '-' : Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 6 }));
+      const signedMoney = (n) => {
+        const v = Number(n || 0);
+        return `${v >= 0 ? '+' : ''}${money(v)}`;
+      };
+      const datePart = (sec) => {
+        if (!sec) return '-';
+        const d = new Date(Number(sec) * 1000);
+        if (Number.isNaN(d.getTime())) return '-';
+        return d.toLocaleDateString();
+      };
+      const timePart = (sec) => {
+        if (!sec) return '-';
+        const d = new Date(Number(sec) * 1000);
+        if (Number.isNaN(d.getTime())) return '-';
+        return d.toLocaleTimeString();
+      };
+
+      async function fetchJson(path, options = {}) {
+        const res = await fetch(path, options);
+        if (!res.ok) {
+          const txt = await res.text();
+          throw new Error(`${res.status} ${txt}`);
+        }
+        return res.json();
+      }
+
+      function tableHtml(items) {
+        if (!items.length) return '<p class="muted">No closed trades found yet.</p>';
+        const head = ['Date', 'Time', 'Symbol', 'Source', 'Side', 'Entry', 'Exit', 'Size (BOKS)', 'Realized PnL', 'Notes']
+          .map((c) => `<th>${c}</th>`)
+          .join('');
+        const body = items
+          .map((it) => {
+            const pnlValue = it.realized_pnl != null ? Number(it.realized_pnl) : null;
+            const pnlCell =
+              (it.display_realized_pnl == null)
+                ? '<span class="muted" title="Waiting for finalized close data from server history">Pending settlement</span>'
+                : `<span class="pnl-chip ${Number(it.display_realized_pnl) >= 0 ? 'up' : 'down'}">${signedMoney(it.display_realized_pnl)} BOKS</span>${it.realized_estimated ? ' <span class="recovered-chip" title="Estimated from latest market data while waiting server finalization">Estimated</span>' : ''}`;
+            const sourceCell = `${it.source_label || '-'}${it.recovered ? ` <span class="recovered-chip" title="${String(it.close_reason || 'Recovered close').replace(/"/g, '&quot;')}">Recovered</span>` : ''}`;
+            const notes = it.notes || '';
+            const exitCell = it.display_exit_price == null
+              ? '-'
+              : `${money(it.display_exit_price)}${it.exit_estimated ? ' <span class="recovered-chip" title="Estimated exit from market snapshot/price hints">Est</span>' : ''}`;
+            return `<tr>
+              <td>${datePart(it.close_ts)}</td>
+              <td>${timePart(it.close_ts)}</td>
+              <td>${it.symbol || '-'}</td>
+              <td>${sourceCell}</td>
+              <td>${it.side || '-'}</td>
+              <td>${it.entry_price == null ? '-' : money(it.entry_price)}</td>
+              <td>${exitCell}</td>
+              <td>${it.size_boks == null ? '-' : money(it.size_boks)}</td>
+              <td>${pnlCell}</td>
+              <td class="note-cell" data-id="${it.id}">
+                <div class="note-view">
+                  <span class="note-text">${notes || '-'}</span>
+                  <button class="opt-btn note-edit-btn" type="button">Edit</button>
+                </div>
+                <div class="note-editor">
+                  <input class="note-input" type="text" value="${String(notes).replace(/"/g, '&quot;')}" placeholder="Input note" />
+                  <button class="opt-btn note-save-btn" type="button">Save</button>
+                  <button class="opt-btn note-cancel-btn" type="button">Cancel</button>
+                </div>
+              </td>
+            </tr>`;
+          })
+          .join('');
+        return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+      }
+
+      function renderSummary(summary) {
+        const rows = [
+          ['Total fills', summary.fills || 0],
+          ['Best PnL', `${signedMoney(summary.best || 0)} BOKS`],
+          ['Worst PnL', `${signedMoney(summary.worst || 0)} BOKS`],
+          ['Total Size', `${money(summary.qty || 0)} BOKS`],
+          ['Total PnL', `${signedMoney(summary.gross || 0)} BOKS`],
+          ['Wins', summary.wins || 0],
+          ['Losses', summary.losses || 0],
+        ];
+        document.getElementById('journal-summary').innerHTML = rows
+          .map((r) => `<div class="summary-item"><span>${r[0]}</span><strong>${r[1]}</strong></div>`)
+          .join('');
+      }
+
+      function renderPager() {
+        const pager = document.getElementById('journal-pager');
+        if (state.total <= state.pageSize) {
+          pager.innerHTML = '';
+          return;
+        }
+        pager.innerHTML = `
+          <button class="pager-btn" type="button" id="j-prev" ${state.page <= 1 ? 'disabled' : ''}>Previous</button>
+          <span class="pager-info">Showing page ${state.page}/${state.pages} - ${state.total} entries</span>
+          <button class="pager-btn" type="button" id="j-next" ${state.page >= state.pages ? 'disabled' : ''}>Next</button>
+        `;
+        const prev = document.getElementById('j-prev');
+        const next = document.getElementById('j-next');
+        if (prev) prev.addEventListener('click', () => load(state.page - 1));
+        if (next) next.addEventListener('click', () => load(state.page + 1));
+      }
+
+      async function updateAnnotations(entryId, notes) {
+        await fetchJson(`/api/journal/${entryId}`, {
+          method: 'PATCH',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify({ notes }),
+        });
+      }
+
+      async function load(page = 1) {
+        state.pageSize = Number(document.getElementById('journal-page-size').value || 20);
+        const params = new URLSearchParams({
+          page: String(Math.max(1, page)),
+          page_size: String(state.pageSize),
+          search: state.search,
+          source: state.source,
+          state: state.finalizationState,
+          recovered: state.recovered,
+        });
+
+        const [rowsData, summaryData] = await Promise.all([
+          fetchJson(`/api/journal?${params.toString()}`),
+          fetchJson(`/api/journal/summary?search=${encodeURIComponent(state.search)}&source=${encodeURIComponent(state.source)}&state=${encodeURIComponent(state.finalizationState)}&recovered=${encodeURIComponent(state.recovered)}`),
+        ]);
+
+        const paging = rowsData.paging || {};
+        state.page = Number(paging.page || 1);
+        state.pages = Number(paging.pages || 1);
+        state.total = Number(paging.total || 0);
+
+        const items = rowsData.items || [];
+        document.getElementById('journal-table').innerHTML = tableHtml(items);
+        renderPager();
+        renderSummary(summaryData.summary || {});
+
+        document.querySelectorAll('#journal-table .note-cell').forEach((cell) => {
+          const id = Number(cell.dataset.id || 0);
+          const editBtn = cell.querySelector('.note-edit-btn');
+          const saveBtn = cell.querySelector('.note-save-btn');
+          const cancelBtn = cell.querySelector('.note-cancel-btn');
+          const editor = cell.querySelector('.note-editor');
+          const input = cell.querySelector('.note-input');
+          const noteText = cell.querySelector('.note-text');
+
+          if (!id || !editBtn || !saveBtn || !cancelBtn || !editor || !input || !noteText) return;
+
+          editBtn.addEventListener('click', () => {
+            cell.classList.add('note-editing');
+            editor.classList.add('active');
+            input.focus();
+          });
+
+          cancelBtn.addEventListener('click', () => {
+            cell.classList.remove('note-editing');
+            editor.classList.remove('active');
+            input.value = noteText.textContent === '-' ? '' : noteText.textContent;
+          });
+
+          saveBtn.addEventListener('click', async () => {
+            const next = String(input.value || '').trim();
+            try {
+              await updateAnnotations(id, next);
+              noteText.textContent = next || '-';
+              cell.classList.remove('note-editing');
+              editor.classList.remove('active');
+            } catch (e) {
+              window.alert(String(e));
+            }
+          });
+        });
+      }
+
+      document.getElementById('journal-page-size').addEventListener('change', () => load(1));
+      document.getElementById('journal-source-filter').addEventListener('change', () => {
+        state.source = document.getElementById('journal-source-filter').value;
+        load(1);
+      });
+      document.getElementById('journal-state-filter').addEventListener('change', () => {
+        state.finalizationState = document.getElementById('journal-state-filter').value;
+        load(1);
+      });
+      document.getElementById('journal-recovered-filter').addEventListener('change', () => {
+        state.recovered = document.getElementById('journal-recovered-filter').value;
+        load(1);
+      });
+      document.getElementById('journal-refresh-btn').addEventListener('click', async () => {
+        const btn = document.getElementById('journal-refresh-btn');
+        btn.disabled = true;
+        btn.textContent = 'Refreshing...';
+        try {
+          await fetchJson('/api/journal/refresh', { method: 'POST' });
+          await load(state.page);
+        } catch (e) {
+          window.alert(String(e));
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Refresh Finalized PnL';
+        }
+      });
+      document.getElementById('journal-search-btn').addEventListener('click', () => {
+        state.search = document.getElementById('journal-search').value.trim();
+        load(1);
+      });
+      document.getElementById('journal-clear-btn').addEventListener('click', () => {
+        state.search = '';
+        state.source = 'all';
+        state.finalizationState = 'ALL';
+        state.recovered = 'all';
+        document.getElementById('journal-search').value = '';
+        document.getElementById('journal-source-filter').value = 'all';
+        document.getElementById('journal-state-filter').value = 'ALL';
+        document.getElementById('journal-recovered-filter').value = 'all';
+        load(1);
+      });
+
+      load(1).catch((e) => {
+        document.getElementById('journal-table').innerHTML = `<p class="muted">${String(e)}</p>`;
+      });
+    </script>
+    <script src="/static/theme.js"></script>
+  </body>
+</html>

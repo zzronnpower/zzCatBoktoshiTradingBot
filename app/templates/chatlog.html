@@ -34,6 +34,7 @@
         <p>Raw transcript 100% theo noi dung chat User va Assistant.</p>
         <div class="nav-links">
           <a href="/">Dashboard</a>
+          <a href="/journal">Boktoshi Trading Journal</a>
           <a href="/manual">Manual Trade</a>
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
@@ -836,6 +837,251 @@ Message này sẽ được gửi vào trường `comment` khi gọi open trade t
 Kết quả: container `CatBoktoshiTradingBot-dev` đang Running.
 
 Đồng thời đã note rule mới trong `AGENTS.md`: sau khi hoàn thành code thì tự động chạy stack dev, không hỏi lại.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>vào project Boktoshi</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Da vao project `zzCatBoktoshiTradingBot` roi.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>bên TAB ASTER Chart, có thể để default timeframe lúc load lên là 4h được không? Với lại muốn thêm time fram 3D, 1W vào bạn có làm được ko</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Làm được. Da cap nhat ASTER Chart:
+- Default timeframe khi load: `4h`
+- Them timeframe moi: `3D` va `1W`</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>bây giờ mấy phần đó bỏ qua, giờ cái ASTER Chart hiện tại, tôi muốn nó có 1 kiểu rằng: Nó đọc bên Manual hay Strategy position, nếu có vị thế đang mở, nó sẽ hiển thị trên chart ở bên ASTER CHart : Lệnh LONG/Short, điểm Entry, Giá TP, Giá SL,Unrealize Profit/loss. Cái này có thực thi được không?</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Có, thực thi được. Mình sẽ làm thêm một lớp overlay vị thế trên ASTER Chart để hiển thị LONG/SHORT, Entry, TP, SL và uPnL theo vị thế strategy + manual của symbol đang chọn.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>Làm 1 nút riêng: Ghi là Open Position Overlay, và có toggle được. 1 có cái tôi hỏi nữa là : bên ASter Chart, tôi mở ra và để chart ở đó tầm 10s hơn thì chart tự động bị load lại, mất hết các phần Zoom, chọn vị trí hiện tai, bạn kiểm tra xem cái này code có đang bị vậy không?</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai xong:
+- Thêm nút riêng `Open Position Overlay` có toggle ON/OFF, độc lập với `Strategy Overlay`.
+- Overlay vị thế đọc từ `/api/open-positions`, hiển thị cho cả strategy và manual positions theo symbol đang chọn.
+- Vẽ line `Entry / SL / TP` theo từng vị thế LONG/SHORT và hiển thị status có `uPnL` realtime.
+- Đã sửa lỗi chart bị mất zoom/vị trí sau ~10s: không còn `fitContent()` ở mỗi lần refresh định kỳ, nên giữ nguyên viewport hiện tại.
+- `fitContent()` chỉ chạy khi cần (lần đầu load hoặc khi đổi symbol/timeframe).</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>1/ Phần zoom vào không bị reset, nhưng giá của chart thì đứng yên, candle cũng không update luôn? Cái này có sai không? 2/ phần open position Overlay có thể bỏ hết các thông số không, nó bị dài quá gây nhảy dòng, chỉ đề  cái uPNL chữ bold màu cam là được</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã cập nhật tiếp theo yêu cầu:
+- Thêm stream kline websocket theo symbol + timeframe để candle/volume update realtime trên chart.
+- Giữ REST kline làm fallback đồng bộ chậm hơn, tránh ghi đè liên tục.
+- Overlay status đã rút gọn: bỏ toàn bộ chuỗi thông số dài, chỉ hiển thị uPnL tách từng vị thế.
+- uPnL được hiển thị dạng chữ đậm màu cam để dễ nhìn và không gây nhảy dòng.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>chỉnh MANUAL LONG uPnL: thành BOKS, chứ ko phải USDT</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã chỉnh unit hiển thị uPnL ở Open Position Overlay từ `USDT` sang `BOKS`.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>mở dự án Boktoshi lên, phần trade history tôi muốn khi đóng trade sẽ có PnL của trade đó, thứ 2 là mỗi 20 trade thì chuyển sang 1 trang khác, để nó không bị nhảy dòng dài quá mức, thứ 3 là cập nhật PnL là cập nhật theo trade đã đóng, hiện tại hình như đang cập nhật theo Unrealize PnL, thì không đúng với ý nghĩa của PNL History?</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã cập nhật theo đúng luồng closed-trade:
+- Dashboard Trade History hiển thị PnL theo trade đã đóng (realized) và net.
+- Dashboard PnL History chuyển sang dữ liệu realized theo trade đóng, không còn dùng unrealized equity snapshot.
+- Thêm phân trang 20 dòng/trang cho cả Trade History và PnL History để tránh bảng quá dài.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>và tôi muốn có 1 trang tab riêng lưu giữ dữ liệu trading theo kiểu Journal giống như vầy</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã thêm tab mới `Bokoshi Trading Journal` với giao diện journal chuyên nghiệp:
+- Trang riêng `/journal` + nav tab trên các trang chính.
+- Bảng journal closed trades gồm date/time, symbol, side, qty, entry/exit, commission, fees, net, notes, tags.
+- Có search notes/tags/symbol, chọn page size, previous/next pagination.
+- Có summary cuối bảng: total fills, best, worst, gross, commission, fees, net, wins, losses.
+- Có lưu dữ liệu `journal_entries` trong SQLite và cho phép sửa notes/tags từng dòng.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã tự động chạy stack dev sau khi code xong:
+`docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`
+
+Kết quả: container `CatBoktoshiTradingBot-dev` đang Running.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>sao phần PnL History và phần Trading journal không có dữ liệu gì hết? Bạn không trích xuất được dữ liệu à?</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Da check live API:
+- Journal/Trade History có bản ghi close nhưng nhiều dòng chưa có `realized_pnl` vì nguồn cache `last_history` rỗng, fallback local close log không có đủ PnL thật.
+- Đã lên phương án: tăng chuẩn hóa field + fallback ghép OPEN/CLOSE + thử lấy live history khi cache trống.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok, làm đi. Với lại tôi thấy Daskboard bây giờ có 2 phần PnL History và Trade History, như vậy hãy để phần PnL History vẫn hiển thị như trước đây (Unrealize PnL), còn phần Trade History phải cập nhật PnL vào và bỏ cột NET.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã cập nhật theo yêu cầu cuối:
+- Rollback Dashboard `PnL History` về kiểu cũ (equity + unrealized).
+- `Trade History` giữ realized PnL theo lệnh đóng, bỏ cột Net, hiển thị Entry/Exit/Qty/Realized.
+- Nâng parser để cố gắng điền đầy đủ hơn dữ liệu trade đóng.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok, phần Trading Journal nhớ cho đầy đủ dữ liệu của trade vào (Entry, Exit, Qty, PnL...), bỏ NET/Commission/Fees/Options, phần notes có nút Edit để nhập và lưu.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai:
+- Đổi tên/tab thành `Boktoshi Trading Journal`.
+- Journal table còn các cột trade chính: Date, Time, Symbol, Side, Entry, Exit, Qty, Realized PnL, Notes.
+- Bỏ Net/Commission/Fees/Options.
+- Notes có inline edit: Edit -> input -> Save/Cancel, lưu bền qua API `PATCH /api/journal/{entry_id}`.
+- Tự động chạy lại stack dev sau khi code xong và container vẫn Running.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>và hôm qua tôi có mở 1 lệnh LONG PUMPUSDT, nhưng bị đóng mà ko biết lí do, hiện tại trên Trade History và JOURNAL không thể hiện lệnh này, bạn có thể tìm lại giùm không?</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã forensic DB/API:
+- Có OPEN PUMPUSDT LONG, nhưng không có CLOSE local.
+- position id bị clear stale sau đó, chứng tỏ vị thế đã đóng từ external flow nhưng bot không nhận close callback chi tiết.
+- Vì `last_history` rỗng tại thời điểm check nên không truy ra close reason chính xác (TP/SL) từ server history.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok triển khai toàn bộ, làm luôn source Manual/Strategy/Stra closed Manually, size BOKS, rút ngắn PnL History, và chống mất lệnh khi app offline.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai full bundle:
+- Trade History: `Qty` -> `Size (BOKS)`, Source hiển thị `Manual/Strategy/Stra closed Manually`.
+- Journal: thêm cột Source, `Qty` -> `Size (BOKS)`, giữ Entry/Exit/Realized/Notes edit.
+- PnL History: giữ unrealized mode, paging ngắn hơn (10 dòng/trang).
+- Backend thêm stale-close recovery để không mất lệnh khi app offline và position biến mất không có close callback.
+- Lệnh PUMP hiện đã được recover vào Trade History + Journal với source Manual và size BOKS.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok làm luôn</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã làm luôn phần badge cảnh báo cho row recover:
+- Dashboard Trade History: cột Source hiển thị chip `Recovered` màu amber khi là lệnh recovered.
+- Journal: cột Source hiển thị chip `Recovered` tương tự.
+- Hover vào chip sẽ thấy tooltip reason để biết vì sao lệnh được phục dựng.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>tôi vừa đóng 2 lệnh để test nhưng Trade History/Journal thiếu dữ liệu và không ổn.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã fix toàn bộ lỗi data integrity:
+- Sửa triệt để duplicate rows do external_id không ổn định (trước đây dùng idx).
+- Chuyển sang id stable theo positionId (`local-close:&lt;positionId&gt;`) + replace-sync để tự dọn row cũ lệch chuẩn.
+- Bổ sung `close_snapshot` vào payload close để giữ entry/current/size/uPnL ngay lúc đóng, phục vụ backfill khi server không trả realized ngay.
+- Hiển thị trạng thái `Pending settlement` thay vì để trống khi close đã vào nhưng chưa có realized/exit finalize từ server history.
+- Label source cho close strategy thủ công đã đúng: `Stra closed Manually`.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>vẫn thiếu exit/pnl, làm theo hướng estimate và có nút Refresh nhé.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai:
+- `POST /api/journal/refresh` để force sync ngay.
+- Thêm nút `Refresh Finalized PnL` trên Dashboard Trade History và Journal.
+- Khi server chưa trả finalized close values, hệ thống hiển thị estimate:
+  - `display_exit_price` + `display_realized_pnl`
+  - có badge `Est/Estimated` để phân biệt số ước tính.
+- Dữ liệu mới close (ETH/DOGE test) hiện có exit/pnl estimate ngay sau refresh, trong khi vẫn giữ trạng thái pending cho finalized PnL từ server.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>Phần Total PnL, Best/Worst PnL cũng phải cộng luôn phần Estimate.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã cập nhật summary theo yêu cầu:
+- Total PnL / Best PnL / Worst PnL / Wins / Losses giờ tính trên `display_realized_pnl`.
+- Nếu Boktoshi trả PnL thật thì dùng số thật; nếu chưa có thì dùng estimated PnL.
+- UI Journal summary giữ nguyên nhưng số liệu đã phản ánh cả estimate.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>scroll ngang ở Trade History bị auto refresh giật về đầu, làm cho không bị.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã fix UX scroll:
+- Giữ lại `scrollLeft` sau mỗi lần render table.
+- Theo dõi tương tác chuột/touch/scroll trên vùng table.
+- Trong lúc user đang kéo ngang, tạm bỏ qua rerender Trade History để không bị snap-back.
+
+Kết quả: kéo ngang xem cột ở Trade History mượt hơn, không tự nhảy về đầu ngay.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>signals/logs/pnl history chỉ giữ dữ liệu mới nhất 100 dòng thôi, không để phình.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai cap lưu trữ runtime:
+- `logs`: giữ tối đa 100 dòng.
+- `signals`: giữ tối đa 100 dòng.
+- `equity_curve` (nguồn PnL History): giữ tối đa 100 dòng.
+
+Chi tiết:
+- Trim tự động sau mỗi lần insert (log/signal/equity snapshot).
+- Có thêm trim one-shot lúc startup để dọn dữ liệu cũ đã phình.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>sau khi sửa tối ưu thì Estimate PnL biến mất, toàn bộ chuyển lại Pending settlement.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã xác định nguyên nhân và xử lý:
+- Nguyên nhân: backend chỉ cho phép estimate trong cửa sổ 2 giờ, quá thời gian sẽ rơi về Pending.
+- Đã bỏ giới hạn 2 giờ trong price-hint estimator để estimate tiếp tục hiển thị cho các lệnh pending chưa có finalized PnL.
+
+Đồng thời tiếp tục checklist cải thiện hệ thống:
+- Tạo file `CHECKLIST_CAI_THIEN_HE_THONG.md` và bắt đầu thực thi.
+- Hoàn thành Phase 1.1: tách sync nặng ra background worker + lock, endpoint history/journal đọc nhanh từ DB.
+- Làm tiếp Phase 1.2 (một phần): tách polling Dashboard thành fast lane (3s) và slow lane (15s cache) để giảm lag/giật.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok tiến hành tiếp checklist.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai tiếp:
+- Dashboard thêm hash-based rerender: Trade History/PnL History/Signals/Logs chỉ redraw khi dữ liệu thật sự đổi.
+- Harden SQLite trong storage:
+  - kết nối chuẩn có `busy_timeout`
+  - bật `WAL` + `synchronous=NORMAL`
+  - thêm index truy vấn nóng cho logs/signals/trades/equity/journal.
+- Tối ưu estimate:
+  - bỏ hẳn cutoff 2 giờ,
+  - warm hint cache nền ở startup/force sync để estimate quay lại nhanh hơn.
+- Checklist đã được cập nhật trạng thái mới trong `CHECKLIST_CAI_THIEN_HE_THONG.md`.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok tiếp tục checklist.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã tiếp tục và hoàn thành thêm các mục trọng tâm:
+- Retry finalize theo positionId (backoff):
+  - thêm queue pending finalize lưu KV, retry theo cấp số mũ (15s -> max 900s), timeout 24h.
+  - đồng bộ history live chỉ khi đến lượt retry/TTL/force refresh để tránh gọi nặng liên tục.
+- Integrity monitoring:
+  - thêm API `GET /api/system/integrity-report` để xem duplicate, stale pending, missing core fields.
+  - thêm script `scripts/integrity_check.py` để quét trực tiếp DB và in JSON report.
+- Checklist cập nhật trạng thái tương ứng trong `CHECKLIST_CAI_THIEN_HE_THONG.md`.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok tiếp tục phase tiếp theo.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai phase testability/release safety:
+- Fix hạ tầng test:
+  - thêm `tests/conftest.py` để sửa import path `app`/`BoktoshiBotModule`.
+  - thêm `pytest.ini` chuẩn hóa test discovery.
+- Bổ sung test mới:
+  - `tests/test_journal_helpers.py` (summary + integrity helper)
+  - `tests/test_integrity_script.py` (integrity CLI behavior)
+- Kết quả test: `18 passed`.
+
+Checklist đã cập nhật trạng thái phase tương ứng.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok tiếp tục phase tiếp theo.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã tiếp tục phase mới và hoàn thành thêm:
+- Observability:
+  - thêm endpoint `GET /api/system/metrics` (latency endpoint, journal sync stats, remote history error-rate, pending finalize count).
+  - thêm middleware timing cho các route `/api/*`.
+- Data integrity test:
+  - thêm `tests/test_journal_storage_dedupe.py` để khóa regression dedupe/prune của `replace_journal_entries`.
+- Lock contention evaluation:
+  - thêm script `scripts/lock_contention_check.py`.
+  - benchmark 8 workers x 250 loops: `total_err=0`.
+- Test status cập nhật: `19 passed`.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok làm tiếp.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã làm tiếp và hoàn thiện mục logging structured theo checklist:
+- Bổ sung structured logs cho các flow trade quan trọng trong `BoktoshiBotModule/bot_runner.py`:
+  - close/open submitted, failed, dry-run, rate-limited.
+  - stale owner-position cleanup.
+  - các log giờ có `event`, `position_id`, và `external_id` (khi có) để trace dễ hơn.
+- Bổ sung test `tests/test_system_metrics.py` cho contract endpoint metrics.
+- Cập nhật trạng thái checklist và chạy lại test:
+  - `pytest` => `20 passed`.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok làm luôn phần còn lại của checklist.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã hoàn tất phần còn lại:
+- Đánh dấu complete 3 mục deliverables chung trong `CHECKLIST_CAI_THIEN_HE_THONG.md`.
+- Checklist hiện không còn item kỹ thuật nào chưa hoàn thành.
+- Đã cập nhật lại `PROJECT_LOG.md` để chốt trạng thái phase hiện tại.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok lam tiep.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Da bo sung ke hoach vong tiep theo:
+- Tao file `NEXT_ROADMAP.md` gom cac phase tiep theo (architecture cleanup, UX/operations, data quality, CI/test, performance targets).
+- Cap nhat `PROJECT_LOG.md` de ghi nhan roadmap moi sau khi checklist hien tai da dong.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>lam toan bo 5 phase roadmap.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Da trien khai full 5 phase:
+- Phase A: tao service layer `app/services/journal_app_service.py` va wire endpoint journal/trade-history/integrity qua service.
+- Phase B: Dashboard them `System Health`, nut `Clear Stale Pending Queue`; Journal them quick filters (source/state/recovered).
+- Phase C: bo sung truong suy dien `finalization_state` + `estimated_source` cho journal rows.
+- Phase D: them CI workflow `.github/workflows/pytest.yml` chay pytest tren push/PR.
+- Phase E: them script target benchmark `scripts/perf_targets_check.py` va run local pass target.
+
+Ket qua verify:
+- `pytest` => `20 passed`.
+- endpoint moi/chinh (`/api/system/metrics`, journal filters, clear stale queue) deu 200.</pre></div>
           </div>
         </div>
       </section>

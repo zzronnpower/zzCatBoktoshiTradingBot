@@ -13,8 +13,9 @@
         <p>Multi-strategy monitor for BTCUSDT, ETHUSDT, SOLUSDT with manual controls.</p>
         <div class="nav-links">
           <a href="/" class="active">Dashboard</a>
-          <a href="/journal">Boktoshi Trading Journal</a>
           <a href="/manual" class="nav-position-management">Position Management</a>
+          <a href="/journal">Boktoshi Trading Journal</a>
+          <a href="/fredtrade-migration-report">FredTradeMigration Report</a>
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
           <a href="/chatlog">ChatLog</a>
@@ -22,6 +23,8 @@
         <div class="live-bar" id="live-bar">
           <span class="dot" id="live-dot"></span>
           <span id="live-text">Connecting...</span>
+          <button id="dashboard-refresh-btn" type="button" class="live-refresh-btn">Refresh Dashboard</button>
+          <button id="anti-rate-toggle-btn" type="button" class="live-refresh-btn">Toggle Anti Rate Limit Profit</button>
         </div>
       </header>
 
@@ -280,8 +283,21 @@
         if (text) text.textContent = message;
       }
 
+      const PROFILE_STORAGE_KEY = 'dashboard_profile_mode';
+      const PROFILE_NORMAL = 'normal';
+      const PROFILE_ANTI_RATE = 'anti-rate';
+
       let refreshRunning = false;
       let refreshErrors = 0;
+      let refreshTimer = null;
+      let profileMode = (() => {
+        try {
+          const raw = localStorage.getItem(PROFILE_STORAGE_KEY);
+          return raw === PROFILE_ANTI_RATE ? PROFILE_ANTI_RATE : PROFILE_NORMAL;
+        } catch (_) {
+          return PROFILE_NORMAL;
+        }
+      })();
       const renderHashes = {
         history: '',
         pnl: '',
@@ -290,14 +306,59 @@
       };
       const slowCache = {
         history: null,
-        pnl: null,
         signals: null,
         logs: null,
         lastFetchedAt: 0,
-        ttlMs: 15000,
+        ttlMs: 20000,
+      };
+      const pnlCache = {
+        data: null,
+        lastFetchedAt: 0,
       };
 
-      async function refresh() {
+      function getProfileConfig() {
+        if (profileMode === PROFILE_ANTI_RATE) {
+          return {
+            coreIntervalMs: 30000,
+            slowTtlMs: 120000,
+            allowSlowAuto: false,
+            label: 'Anti-rate profile active',
+          };
+        }
+        return {
+          coreIntervalMs: 8000,
+          slowTtlMs: 20000,
+          allowSlowAuto: true,
+          label: 'Normal running profile',
+        };
+      }
+
+      function applyProfileUi() {
+        const toggleBtn = document.getElementById('anti-rate-toggle-btn');
+        if (!toggleBtn) return;
+        if (profileMode === PROFILE_ANTI_RATE) {
+          toggleBtn.textContent = 'Toggle To Normal Running Profile';
+        } else {
+          toggleBtn.textContent = 'Toggle Anti Rate Limit Profit';
+        }
+      }
+
+      function restartAutoRefreshLoop() {
+        const cfg = getProfileConfig();
+        slowCache.ttlMs = cfg.slowTtlMs;
+        if (refreshTimer) {
+          clearInterval(refreshTimer);
+          refreshTimer = null;
+        }
+        refreshTimer = setInterval(() => {
+          refresh({ force: false, source: 'auto' });
+        }, cfg.coreIntervalMs);
+      }
+
+      async function refresh(options = {}) {
+        const force = Boolean(options.force);
+        const source = String(options.source || 'auto');
+        const cfg = getProfileConfig();
         if (refreshRunning) return;
         refreshRunning = true;
         try {
@@ -310,34 +371,42 @@
 
           const nowMs = Date.now();
           const needSlowRefresh =
-            !slowCache.history ||
-            !slowCache.pnl ||
-            !slowCache.signals ||
-            !slowCache.logs ||
-            nowMs - Number(slowCache.lastFetchedAt || 0) >= Number(slowCache.ttlMs || 15000);
+            force ||
+            (!slowCache.history || !slowCache.signals || !slowCache.logs) ||
+            (cfg.allowSlowAuto && nowMs - Number(slowCache.lastFetchedAt || 0) >= Number(slowCache.ttlMs || 20000));
 
           if (needSlowRefresh) {
             try {
-              const [history, pnl, signals, logs] = await Promise.all([
+              const [history, signals, logs] = await Promise.all([
                 fetchJson('/api/trade-history'),
-                fetchJson('/api/pnl-history'),
                 fetchJson('/api/signals'),
                 fetchJson('/api/logs'),
               ]);
               slowCache.history = history;
-              slowCache.pnl = pnl;
               slowCache.signals = signals;
               slowCache.logs = logs;
               slowCache.lastFetchedAt = nowMs;
             } catch (slowErr) {
-              if (!slowCache.history || !slowCache.pnl || !slowCache.signals || !slowCache.logs) {
+              if (!slowCache.history || !slowCache.signals || !slowCache.logs) {
                 throw slowErr;
               }
             }
           }
 
+          const shouldFetchPnl = source === 'dashboard';
+          if (shouldFetchPnl) {
+            try {
+              pnlCache.data = await fetchJson('/api/pnl-history');
+              pnlCache.lastFetchedAt = nowMs;
+            } catch (pnlErr) {
+              if (!pnlCache.data) {
+                throw pnlErr;
+              }
+            }
+          }
+
           const history = slowCache.history || { closed_trades: [] };
-          const pnl = slowCache.pnl || { items: [] };
+          const pnl = pnlCache.data || { items: [] };
           const signals = slowCache.signals || { items: [] };
           const logs = slowCache.logs || { items: [] };
 
@@ -383,6 +452,7 @@
           const journalReq = req['/api/journal'] || req['/api/journal?page=1&page_size=20'] || {};
           const sync = m.journal_sync || {};
           const remote = m.remote_history || {};
+          const regime = m.regime_tuning || {};
           renderKV(document.getElementById('system-health'), [
             { key: 'Pending finalize queue', value: `${m.pending_finalize_count || 0}` },
             { key: 'TradeHistory avg/max', value: `${money(tradeReq.avg_ms || 0)}ms / ${money(tradeReq.max_ms || 0)}ms` },
@@ -390,6 +460,11 @@
             { key: 'Last sync duration', value: `${money(sync.last_duration_ms || 0)}ms` },
             { key: 'Sync errors', value: `${sync.errors || 0}` },
             { key: 'Remote fetch errors', value: `${remote.fetch_errors || 0}` },
+            { key: 'Regime candidates/opened', value: `${regime.candidates_total || 0} / ${regime.candidates_opened_total || 0}` },
+            { key: 'Regime cap blocked', value: `${regime.cap_blocked_total || 0}` },
+            { key: 'Regime symbol-cap blocked', value: `${regime.symbol_cap_blocked_total || 0}` },
+            { key: 'Regime volatility skips', value: `${regime.volatility_shock_skipped_total || 0}` },
+            { key: 'Regime open rate', value: `${((Number(regime.open_rate || 0)) * 100).toFixed(2)}%` },
           ]);
 
         renderTable(
@@ -527,7 +602,7 @@
           }
 
           const now = new Date();
-          setLiveState('ok', `Live - Last update: ${now.toLocaleTimeString()}`);
+          setLiveState('ok', `Live - ${cfg.label} - Last update: ${now.toLocaleTimeString()}`);
           refreshErrors = 0;
         } catch (err) {
           refreshErrors += 1;
@@ -538,18 +613,40 @@
         }
       }
 
-      refresh();
-      setInterval(refresh, 3000);
+      applyProfileUi();
+      refresh({ force: false, source: 'auto' });
+      restartAutoRefreshLoop();
+
+      const dashboardRefreshBtn = document.getElementById('dashboard-refresh-btn');
+      if (dashboardRefreshBtn) {
+        dashboardRefreshBtn.addEventListener('click', async () => {
+          dashboardRefreshBtn.disabled = true;
+          dashboardRefreshBtn.textContent = 'Refreshing...';
+          try {
+            try {
+              await fetchJson('/api/journal/refresh', 10000, { method: 'POST' });
+            } catch (_) {
+            }
+            slowCache.lastFetchedAt = 0;
+            await refresh({ force: true, source: 'dashboard' });
+          } catch (err) {
+            setLiveState('warn', `Dashboard refresh failed: ${String(err)}`);
+          } finally {
+            dashboardRefreshBtn.disabled = false;
+            dashboardRefreshBtn.textContent = 'Refresh Dashboard';
+          }
+        });
+      }
 
       const historyRefreshBtn = document.getElementById('history-refresh-btn');
       if (historyRefreshBtn) {
         historyRefreshBtn.addEventListener('click', async () => {
           historyRefreshBtn.disabled = true;
-          historyRefreshBtn.textContent = 'Refreshing...';
+            historyRefreshBtn.textContent = 'Refreshing...';
           try {
             await fetchJson('/api/journal/refresh', 10000, { method: 'POST' });
             slowCache.lastFetchedAt = 0;
-            await refresh();
+            await refresh({ force: true, source: 'history' });
           } catch (err) {
             setLiveState('warn', `Refresh failed: ${String(err)}`);
           } finally {
@@ -567,13 +664,32 @@
           try {
             const result = await fetchJson('/api/journal/clear-stale-pending?max_age_sec=86400', 10000, { method: 'POST' });
             slowCache.lastFetchedAt = 0;
-            await refresh();
+            await refresh({ force: true, source: 'clear-stale' });
             setLiveState('ok', `Cleared stale queue: removed ${result.removed || 0} entries`);
           } catch (err) {
             setLiveState('warn', `Clear stale failed: ${String(err)}`);
           } finally {
             clearStaleBtn.disabled = false;
             clearStaleBtn.textContent = 'Clear Stale Pending Queue';
+          }
+        });
+      }
+
+      const antiRateToggleBtn = document.getElementById('anti-rate-toggle-btn');
+      if (antiRateToggleBtn) {
+        antiRateToggleBtn.addEventListener('click', async () => {
+          antiRateToggleBtn.disabled = true;
+          try {
+            profileMode = profileMode === PROFILE_ANTI_RATE ? PROFILE_NORMAL : PROFILE_ANTI_RATE;
+            try {
+              localStorage.setItem(PROFILE_STORAGE_KEY, profileMode);
+            } catch (_) {
+            }
+            applyProfileUi();
+            restartAutoRefreshLoop();
+            await refresh({ force: false, source: 'profile-toggle' });
+          } finally {
+            antiRateToggleBtn.disabled = false;
           }
         });
       }

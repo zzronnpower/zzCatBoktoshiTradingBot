@@ -1,0 +1,439 @@
+<!DOCTYPE html>
+<html lang="vi">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>FredTradeMigration Report - zzCatBoktoshiTradingBot</title>
+    <link rel="stylesheet" href="/static/app.css" />
+    <style>
+      .report-wrap {
+        display: grid;
+        gap: 16px;
+      }
+      .report-card {
+        background: linear-gradient(180deg, var(--panel) 0%, var(--panel-soft) 100%);
+        border: 1px solid var(--line);
+        border-radius: 12px;
+        padding: 16px;
+        box-shadow: 0 10px 30px rgba(0, 0, 0, 0.2);
+      }
+      .report-card h2 {
+        margin: 0 0 10px;
+        color: var(--accent);
+        text-transform: uppercase;
+        font-size: 16px;
+        letter-spacing: 0.5px;
+      }
+      .report-card h3 {
+        margin: 14px 0 8px;
+        color: #9fe7cf;
+        font-size: 14px;
+      }
+      .report-list {
+        margin: 0;
+        padding-left: 18px;
+        display: grid;
+        gap: 8px;
+      }
+      .badge-row {
+        display: flex;
+        flex-wrap: wrap;
+        gap: 8px;
+        margin-bottom: 10px;
+      }
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        border-radius: 999px;
+        padding: 5px 10px;
+        font-size: 12px;
+        border: 1px solid transparent;
+        font-weight: 700;
+      }
+      .badge-ok {
+        background: rgba(89, 196, 124, 0.18);
+        border-color: rgba(89, 196, 124, 0.4);
+        color: #8cf2af;
+      }
+      .badge-risk {
+        background: rgba(255, 161, 110, 0.15);
+        border-color: rgba(255, 161, 110, 0.38);
+        color: #ffc89b;
+      }
+      .badge-note {
+        background: rgba(119, 194, 255, 0.15);
+        border-color: rgba(119, 194, 255, 0.35);
+        color: #a3deff;
+      }
+      .focus-box {
+        border-radius: 10px;
+        padding: 12px;
+        border: 1px solid transparent;
+        margin-top: 10px;
+      }
+      .focus-box.success {
+        background: rgba(78, 180, 120, 0.12);
+        border-color: rgba(78, 180, 120, 0.36);
+      }
+      .focus-box.warn {
+        background: rgba(255, 170, 95, 0.11);
+        border-color: rgba(255, 170, 95, 0.34);
+      }
+      .focus-box.info {
+        background: rgba(99, 179, 255, 0.12);
+        border-color: rgba(99, 179, 255, 0.32);
+      }
+      .mapping-table-wrap {
+        overflow-x: auto;
+        border-radius: 10px;
+        border: 1px solid var(--line);
+      }
+      .mapping-table {
+        width: 100%;
+        border-collapse: collapse;
+        min-width: 980px;
+      }
+      .mapping-table th,
+      .mapping-table td {
+        border-bottom: 1px solid rgba(255, 255, 255, 0.08);
+        padding: 10px;
+        vertical-align: top;
+        text-align: left;
+        font-size: 13px;
+      }
+      .mapping-table th {
+        background: rgba(0, 0, 0, 0.2);
+        color: #c8ffec;
+        font-size: 12px;
+        text-transform: uppercase;
+        letter-spacing: 0.6px;
+      }
+      .mapping-table tr:last-child td {
+        border-bottom: none;
+      }
+      .small-note {
+        color: var(--muted);
+        font-size: 12px;
+      }
+      .code-lite {
+        background: rgba(0, 0, 0, 0.2);
+        border: 1px solid rgba(255, 255, 255, 0.08);
+        border-radius: 8px;
+        padding: 10px;
+        font-family: "JetBrains Mono", "Fira Code", monospace;
+        font-size: 12px;
+        line-height: 1.5;
+        white-space: pre-wrap;
+        word-break: break-word;
+      }
+      @media (max-width: 800px) {
+        .header h1 {
+          font-size: 32px;
+        }
+        .header p {
+          font-size: 18px;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <h1>FredTradeMigration Report</h1>
+        <p>
+          Báo cáo đánh giá Freqtrade cho dự án BOktoshi + Aster, kèm thiết kế tích hợp chi tiết endpoint-by-endpoint để dev triển khai ngay.
+        </p>
+        <div class="nav-links">
+          <a href="/">Dashboard</a>
+          <a href="/manual" class="nav-position-management">Position Management</a>
+          <a href="/journal">Boktoshi Trading Journal</a>
+          <a href="/strategy-summary">Tóm tắt Strategy</a>
+          <a href="/aster-chart">ASTER Chart</a>
+          <a href="/aster-trading">AsterTrading</a>
+          <a href="/chatlog">ChatLog</a>
+          <a href="/fredtrade-migration-report" class="active">FredTradeMigration Report</a>
+        </div>
+      </header>
+
+      <div class="report-wrap">
+        <section class="report-card">
+          <h2>Kết Luận Nhanh</h2>
+          <div class="badge-row">
+            <span class="badge badge-ok">Khả thi: Tích hợp được</span>
+            <span class="badge badge-note">Khuyến nghị: Dùng service riêng</span>
+            <span class="badge badge-risk">Rủi ro: Aster chưa official support trong Freqtrade</span>
+          </div>
+          <ul class="report-list">
+            <li>Freqtrade là framework/bot trading crypto mã nguồn mở bằng Python, mạnh ở engine giao dịch, backtesting, hyperopt, API/WebUI/Telegram.</li>
+            <li>Với BOktoshi, hướng phù hợp nhất là tích hợp kiểu sidecar/microservice; không nên nhúng sâu trực tiếp vào cùng process FastAPI hiện tại.</li>
+            <li>Aster có thể kết nối theo hướng kỹ thuật vì Freqtrade đi qua CCXT, và CCXT có adapter <code>aster</code>; tuy nhiên Freqtrade chưa xếp Aster vào danh sách exchange official support.</li>
+            <li>BOktoshi có thể kết nối Freqtrade qua REST/WebSocket để đồng bộ trạng thái, lệnh, trade history và health.</li>
+          </ul>
+          <div class="focus-box success">
+            <strong>Khuyến nghị chốt:</strong> triển khai theo mô hình <code>BOktoshi UI/API</code> + <code>Freqtrade Engine Service</code> + <code>Adapter Mapping</code> để giữ UI hiện tại, đồng thời tận dụng full sức mạnh backtest/hyperopt/FreqAI.
+          </div>
+        </section>
+
+        <section class="report-card">
+          <h2>Freqtrade Là Gì</h2>
+          <ul class="report-list">
+            <li>Kiến trúc bot đầy đủ: load config, load exchange, load strategy, chạy vòng lặp stateful với worker loop.</li>
+            <li>Hệ strategy plugin + callback sâu, phù hợp mở rộng theo chiến lược tùy biến.</li>
+            <li>Tích hợp runtime production: REST API, message websocket, webhook, telegram, discord.</li>
+            <li>Có producer/consumer mode để tái sử dụng indicator/signals giữa nhiều instance.</li>
+            <li>Có persistence chuẩn bằng SQLite/SQLAlchemy và các mô-đun backtest/hyperopt/FreqAI.</li>
+          </ul>
+          <div class="focus-box info">
+            <strong>Giá trị lớn nhất với BOktoshi:</strong> giảm thời gian tự xây engine giao dịch từ đầu, tập trung vào adapter, chiến lược và UX vận hành.
+          </div>
+        </section>
+
+        <section class="report-card">
+          <h2>Đối Chiếu Với BOktoshi Hiện Tại</h2>
+          <ul class="report-list">
+            <li>BOktoshi hiện có FastAPI app + bot loop riêng + client gọi API trực tiếp cho MTC/Hyperliquid/Aster.</li>
+            <li>Điểm mạnh: dashboard/manual/journal đã tách rõ, phù hợp để gắn external engine theo lớp adapter.</li>
+            <li>Điểm yếu: chưa có exchange abstraction thống nhất, bot runner còn phụ thuộc mạnh vào client cụ thể.</li>
+            <li>Hướng cải tiến: trừu tượng hóa tầng thực thi thành <code>ExecutionBackend</code>, sau đó thêm <code>MTCBackend</code> và <code>FreqtradeBackend</code>.</li>
+          </ul>
+          <div class="focus-box warn">
+            <strong>Điểm cần lưu ý:</strong> cần thống nhất format symbol, trade id, trạng thái vị thế, PnL để journal không lệch dữ liệu.
+          </div>
+        </section>
+
+        <section class="report-card">
+          <h2>Tích Hợp Với BOktoshi: Tích Hợp Hay Làm Riêng</h2>
+          <h3>Khuyến nghị kiến trúc</h3>
+          <ul class="report-list">
+            <li><strong>Nên làm service riêng:</strong> chạy Freqtrade độc lập và BOktoshi gọi qua REST/WebSocket.</li>
+            <li><strong>Không nên merge source sâu:</strong> Freqtrade có lifecycle/state machine/threading riêng, nhúng chung process sẽ khó debug và nâng cấp.</li>
+            <li><strong>Bảo toàn hệ hiện tại:</strong> vẫn giữ manual control, dashboard, journal trong BOktoshi; chỉ thay hoặc bổ sung engine execution.</li>
+          </ul>
+          <h3>Rủi ro/chi phí chính</h3>
+          <ul class="report-list">
+            <li>Phát sinh tầng mapping dữ liệu giữa 2 hệ.</li>
+            <li>Cần cơ chế đồng bộ trạng thái chạy/dừng/trade slot giữa BOktoshi và Freqtrade.</li>
+            <li>Cần kiểm thử kỹ các hành vi force enter/force exit để không sai lệch logic vận hành hiện tại.</li>
+            <li>Cần lưu ý ràng buộc license GPLv3 nếu copy/chỉnh sửa sâu code lõi Freqtrade.</li>
+          </ul>
+        </section>
+
+        <section class="report-card">
+          <h2>Aster Và BOktoshi Có Kết Nối Được Không</h2>
+          <ul class="report-list">
+            <li><strong>Aster:</strong> khả thi theo đường CCXT; CCXT có adapter <code>aster</code> cho cả market và trading endpoints.</li>
+            <li><strong>Freqtrade official support:</strong> hiện chưa liệt kê Aster trong danh sách exchange subclass chính thức.</li>
+            <li><strong>Thực tế triển khai:</strong> có thể chạy dạng community/experimental, bắt buộc PoC + dry-run + kiểm thử lệnh thật trước khi live.</li>
+            <li><strong>BOktoshi:</strong> kết nối tốt qua REST + WebSocket của Freqtrade để đưa dữ liệu lên dashboard và điều khiển lệnh.</li>
+          </ul>
+          <div class="focus-box warn">
+            <strong>Kết luận Aster:</strong> làm được, nhưng cần chiến lược rollout an toàn theo từng pha thay vì bật live ngay.
+          </div>
+        </section>
+
+        <section class="report-card">
+          <h2>Roadmap Triển Khai Đề Xuất</h2>
+          <ul class="report-list">
+            <li><strong>Phase 1 (2-4 ngày):</strong> chạy Freqtrade riêng, BOktoshi chỉ đọc status/trades/balance/health.</li>
+            <li><strong>Phase 2:</strong> bổ sung adapter mapping cho journal và chuẩn hóa trade schema.</li>
+            <li><strong>Phase 3:</strong> migrate 1 strategy hiện tại sang strategy class của Freqtrade để backtest/hyperopt.</li>
+            <li><strong>Phase 4:</strong> test Aster dry-run, đánh giá độ ổn định order/position mode rồi mới canary live.</li>
+          </ul>
+        </section>
+
+        <section class="report-card">
+          <h2>Thiết Kế Tích Hợp Chi Tiết (Endpoint-by-Endpoint)</h2>
+          <p>
+            Mục tiêu: giữ nguyên contract phía UI/Frontend BOktoshi, thêm tầng adapter trong backend để nói chuyện với Freqtrade API.
+          </p>
+          <div class="focus-box info">
+            <strong>Mô hình:</strong> <code>Frontend -> app/main.py (Boktoshi API) -> FreqtradeAdapter -> Freqtrade REST/WebSocket</code>
+          </div>
+
+          <h3>1) Mapping endpoint hiện tại sang Freqtrade</h3>
+          <div class="mapping-table-wrap">
+            <table class="mapping-table">
+              <thead>
+                <tr>
+                  <th>Endpoint BOktoshi</th>
+                  <th>Freqtrade API tương ứng</th>
+                  <th>Chiều mapping</th>
+                  <th>Ghi chú xử lý</th>
+                </tr>
+              </thead>
+              <tbody>
+                <tr>
+                  <td><code>GET /api/status</code></td>
+                  <td><code>GET /show_config</code>, <code>GET /health</code>, <code>GET /status</code></td>
+                  <td>Freqtrade -&gt; BOktoshi</td>
+                  <td>Map <code>state</code>, <code>strategy</code>, số lệnh mở, health tick về payload status hiện có.</td>
+                </tr>
+                <tr>
+                  <td><code>GET /api/account</code></td>
+                  <td><code>GET /balance</code>, <code>GET /profit</code></td>
+                  <td>Freqtrade -&gt; BOktoshi</td>
+                  <td>Tổng hợp số dư stake + PnL để giữ nguyên block Account Overview.</td>
+                </tr>
+                <tr>
+                  <td><code>GET /api/open-positions</code></td>
+                  <td><code>GET /status</code></td>
+                  <td>Freqtrade -&gt; BOktoshi</td>
+                  <td>Map trade mở của Freqtrade sang schema position strategy/manual của BOktoshi.</td>
+                </tr>
+                <tr>
+                  <td><code>GET /api/trade-history</code></td>
+                  <td><code>GET /trades?limit=&amp;offset=</code></td>
+                  <td>Freqtrade -&gt; BOktoshi</td>
+                  <td>Map fields: <code>trade_id</code>, <code>pair</code>, <code>side</code>, <code>open_date</code>, <code>close_date</code>, <code>profit</code>.</td>
+                </tr>
+                <tr>
+                  <td><code>GET /api/pnl-history</code></td>
+                  <td><code>GET /daily</code>, <code>/weekly</code>, <code>/monthly</code></td>
+                  <td>Freqtrade -&gt; BOktoshi</td>
+                  <td>Dùng daily làm mặc định cho chart, weekly/monthly cho tổng quan.</td>
+                </tr>
+                <tr>
+                  <td><code>GET /api/logs</code></td>
+                  <td><code>GET /logs</code></td>
+                  <td>Freqtrade -&gt; BOktoshi</td>
+                  <td>Chuẩn hóa level/timestamp để render log-list không cần đổi UI.</td>
+                </tr>
+                <tr>
+                  <td><code>POST /api/strategy/select</code></td>
+                  <td><code>POST /reload_config</code> hoặc switch bot instance/strategy config</td>
+                  <td>BOktoshi -&gt; Freqtrade</td>
+                  <td>Freqtrade không có endpoint select strategy runtime trực tiếp; cần cơ chế config profile + reload.</td>
+                </tr>
+                <tr>
+                  <td><code>POST /api/strategy/run-all</code></td>
+                  <td>N/A trực tiếp</td>
+                  <td>Adapter nội bộ</td>
+                  <td>Thiết kế nhiều bot instance theo từng strategy hoặc strategy đa cặp trong Freqtrade.</td>
+                </tr>
+                <tr>
+                  <td><code>POST /api/manual/force-open-long</code></td>
+                  <td><code>POST /forceenter</code> với <code>side=long</code></td>
+                  <td>BOktoshi -&gt; Freqtrade</td>
+                  <td>Map symbol, stakeamount, leverage, ordertype, entry_tag.</td>
+                </tr>
+                <tr>
+                  <td><code>POST /api/manual/force-open-short</code></td>
+                  <td><code>POST /forceenter</code> với <code>side=short</code></td>
+                  <td>BOktoshi -&gt; Freqtrade</td>
+                  <td>Yêu cầu mode futures và exchange hỗ trợ short.</td>
+                </tr>
+                <tr>
+                  <td><code>POST /api/manual/close-position</code></td>
+                  <td><code>POST /forceexit</code></td>
+                  <td>BOktoshi -&gt; Freqtrade</td>
+                  <td>Dùng <code>tradeid</code> đã map từ BOktoshi external_id.</td>
+                </tr>
+                <tr>
+                  <td><code>POST /api/manual/close-all-positions</code></td>
+                  <td><code>POST /forceexit</code> với <code>tradeid=all</code></td>
+                  <td>BOktoshi -&gt; Freqtrade</td>
+                  <td>Cần guard xác nhận thao tác nguy hiểm ở backend.</td>
+                </tr>
+                <tr>
+                  <td><code>POST /api/manual/close-strategy-position</code></td>
+                  <td><code>POST /forceexit</code> theo danh sách trade strategy-owned</td>
+                  <td>Adapter nội bộ</td>
+                  <td>Dựa vào <code>entry_tag/strategy_id</code> để lọc trade thuộc strategy.</td>
+                </tr>
+                <tr>
+                  <td><code>POST /api/manual/close-all-strategy-positions</code></td>
+                  <td><code>POST /forceexit</code> nhiều lần hoặc batch điều phối</td>
+                  <td>Adapter nội bộ</td>
+                  <td>Loop trade theo tag chiến lược, đóng tuần tự có retry.</td>
+                </tr>
+              </tbody>
+            </table>
+          </div>
+          <p class="small-note">Ghi chú: endpoint Freqtrade tiền tố <code>/api/v1</code> trong runtime thực tế.</p>
+
+          <h3>2) Mapping schema dữ liệu cốt lõi</h3>
+          <div class="code-lite"># BOktoshi Position (đang dùng)
+{
+  "position_id": "string",
+  "symbol": "ETHUSDT",
+  "side": "LONG|SHORT",
+  "size": 0,
+  "entry_price": 0,
+  "mark_price": 0,
+  "unrealized_pnl": 0,
+  "owner": "strategy|manual",
+  "strategy_id": "..."
+}
+
+# Freqtrade Status item (quy chiếu)
+{
+  "trade_id": 123,
+  "pair": "ETH/USDT:USDT",
+  "is_short": false,
+  "amount": 0,
+  "open_rate": 0,
+  "current_rate": 0,
+  "profit_abs": 0,
+  "enter_tag": "...",
+  "strategy": "..."
+}
+
+# Quy tắc map đề xuất
+position_id        <- str(trade_id)
+symbol             <- normalize_pair(pair)  # ETH/USDT:USDT -> ETHUSDT
+side               <- is_short ? SHORT : LONG
+size               <- amount
+entry_price        <- open_rate
+mark_price         <- current_rate
+unrealized_pnl     <- profit_abs
+owner              <- infer_owner(enter_tag)  # manual_* -> manual, còn lại -> strategy
+strategy_id        <- strategy hoặc parse từ enter_tag</div>
+
+          <h3>3) Thiết kế Adapter lớp backend (đề xuất code structure)</h3>
+          <div class="code-lite">app/
+  services/
+    freqtrade_adapter.py
+    freqtrade_mapper.py
+    freqtrade_cache.py
+
+freqtrade_adapter.py
+- get_status()
+- get_balance()
+- get_open_trades()
+- get_trade_history(limit, offset)
+- force_enter(pair, side, stake, leverage, ordertype, tag)
+- force_exit(trade_id_or_all)
+- pause_bot()/start_bot()/stop_bot()
+
+freqtrade_mapper.py
+- pair_to_boktoshi_symbol(pair: str) -> str
+- map_trade_to_position(trade: dict) -> dict
+- map_balance_payload(payload: dict) -> dict
+- map_logs(payload: dict) -> list[dict]</div>
+
+          <h3>4) Bảo mật, vận hành, quan sát</h3>
+          <ul class="report-list">
+            <li>Không mở Freqtrade API public internet; chỉ bind nội bộ hoặc qua VPN/SSH tunnel.</li>
+            <li>Dùng <code>username/password</code> mạnh + <code>jwt_secret_key</code> + <code>ws_token</code> ngẫu nhiên đủ dài.</li>
+            <li>Thiết lập timeout/retry/circuit breaker ở adapter để tránh treo dashboard khi Freqtrade chậm.</li>
+            <li>Thêm health check nền: nếu Freqtrade down, BOktoshi chuyển trạng thái "degraded" và khóa endpoint thao tác nguy hiểm.</li>
+          </ul>
+
+          <h3>5) Kế hoạch triển khai cho dev (ngắn gọn, làm ngay)</h3>
+          <ul class="report-list">
+            <li>Tạo <code>FreqtradeAdapter</code> + mapper trước, chỉ tích hợp luồng read-only (status/account/history/logs).</li>
+            <li>Bật thao tác write sau: <code>force-open-long/short</code>, <code>close-position</code>, <code>close-all</code> với feature flag.</li>
+            <li>Giữ nguyên UI response contract để frontend không phải sửa lớn.</li>
+            <li>Canary 1 strategy + 1 symbol trước (ví dụ ETHUSDT), sau đó mở rộng BTC/SOL.</li>
+            <li>Chỉ chuyển live sau khi pass checklist dry-run + log reconciliation + PnL reconciliation.</li>
+          </ul>
+
+          <div class="focus-box success">
+            <strong>Chốt triển khai:</strong> Tích hợp Freqtrade theo lớp adapter là hướng nhanh nhất, an toàn nhất và ít rủi ro nhất để nâng cấp BOktoshi lên mức production-grade trading engine.
+          </div>
+        </section>
+      </div>
+    </div>
+    <script src="/static/theme.js"></script>
+  </body>
+</html>

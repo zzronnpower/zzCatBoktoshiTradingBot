@@ -1,11 +1,14 @@
+import json
 import sqlite3
-from typing import Any, Dict, List
+from typing import Any, Dict, List, Tuple
 
 
 MAX_LOG_ROWS = 100
 MAX_SIGNAL_ROWS = 100
 MAX_EQUITY_ROWS = 100
 SQLITE_BUSY_TIMEOUT_MS = 5000
+FINALIZATION_STATES = {"PENDING", "ESTIMATED", "FINALIZED"}
+ESTIMATED_SOURCES = {"none", "snapshot", "market_hint", "formula"}
 
 
 def _connect(db_path: str) -> sqlite3.Connection:
@@ -27,6 +30,93 @@ def _trim_table_by_id(cur: sqlite3.Cursor, table: str, max_rows: int) -> None:
         """,
         (safe_max,),
     )
+
+
+def _table_columns(cur: sqlite3.Cursor, table: str) -> set[str]:
+    cur.execute(f"PRAGMA table_info({table})")
+    rows = cur.fetchall()
+    out: set[str] = set()
+    for row in rows:
+        if len(row) >= 2 and row[1]:
+            out.add(str(row[1]))
+    return out
+
+
+def _derive_finalization_fields(realized_pnl: Any, exit_price: Any, raw_text: Any) -> Tuple[str, str]:
+    try:
+        realized = float(realized_pnl)
+        if realized == realized:  # not NaN
+            return "FINALIZED", "none"
+    except (TypeError, ValueError):
+        pass
+
+    raw_obj: Dict[str, Any] = {}
+    try:
+        parsed = json.loads(str(raw_text or "{}"))
+        if isinstance(parsed, dict):
+            raw_obj = parsed
+    except Exception:
+        raw_obj = {}
+
+    existing_state = str(raw_obj.get("finalization_state", "") or "").upper().strip()
+    if existing_state in FINALIZATION_STATES:
+        existing_source = str(raw_obj.get("estimated_source", "none") or "none").strip().lower()
+        if existing_source not in ESTIMATED_SOURCES:
+            existing_source = "none"
+        if existing_state == "FINALIZED":
+            return "FINALIZED", "none"
+        return existing_state, existing_source
+
+    close_snapshot = raw_obj.get("close_snapshot") if isinstance(raw_obj.get("close_snapshot"), dict) else {}
+    if isinstance(close_snapshot, dict):
+        for key in ("realizedPnl", "unrealizedPnl", "pnl"):
+            val = close_snapshot.get(key)
+            if val is None:
+                continue
+            try:
+                parsed = float(val)
+                if parsed == parsed:  # not NaN
+                    return "ESTIMATED", "snapshot"
+            except (TypeError, ValueError):
+                continue
+
+    if exit_price is not None:
+        try:
+            maybe_exit = float(exit_price)
+            if maybe_exit == maybe_exit and maybe_exit > 0:
+                return "ESTIMATED", "formula"
+        except (TypeError, ValueError):
+            pass
+
+    return "PENDING", "none"
+
+
+def _ensure_journal_finalization_schema(cur: sqlite3.Cursor) -> None:
+    columns = _table_columns(cur, "journal_entries")
+    if "finalization_state" not in columns:
+        cur.execute("ALTER TABLE journal_entries ADD COLUMN finalization_state TEXT NOT NULL DEFAULT 'PENDING'")
+    if "estimated_source" not in columns:
+        cur.execute("ALTER TABLE journal_entries ADD COLUMN estimated_source TEXT NOT NULL DEFAULT 'none'")
+
+    cur.execute(
+        """
+        SELECT id, realized_pnl, exit_price, raw, finalization_state, estimated_source
+        FROM journal_entries
+        """
+    )
+    rows = cur.fetchall()
+    for row in rows:
+        row_id = int(row[0])
+        current_state = str(row[4] or "").upper().strip()
+        current_source = str(row[5] or "none").lower().strip()
+        needs_backfill = current_state not in FINALIZATION_STATES or current_source not in ESTIMATED_SOURCES
+        if not needs_backfill:
+            continue
+        next_state, next_source = _derive_finalization_fields(row[1], row[2], row[3])
+        cur.execute(
+            "UPDATE journal_entries SET finalization_state = ?, estimated_source = ? WHERE id = ?",
+            (next_state, next_source, row_id),
+        )
 
 
 def trim_runtime_tables(db_path: str) -> None:
@@ -128,6 +218,7 @@ def init_db(db_path: str) -> None:
             )
             """
         )
+        _ensure_journal_finalization_schema(cur)
         cur.execute("CREATE INDEX IF NOT EXISTS idx_logs_ts ON logs (ts)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_signals_ts ON signals (ts)")
         cur.execute("CREATE INDEX IF NOT EXISTS idx_trades_ts_action ON trades (ts, action)")
@@ -228,6 +319,11 @@ def replace_journal_entries(db_path: str, items: List[Dict[str, Any]], now: int)
             external_id = str(item.get("external_id", "") or "").strip()
             if not external_id:
                 continue
+            finalization_state, estimated_source = _derive_finalization_fields(
+                item.get("realized_pnl"),
+                item.get("exit_price"),
+                item.get("raw", "{}"),
+            )
             cur.execute("INSERT OR IGNORE INTO temp_journal_ids (external_id) VALUES (?)", (external_id,))
             cur.execute(
                 """
@@ -245,9 +341,11 @@ def replace_journal_entries(db_path: str, items: List[Dict[str, Any]], now: int)
                     net,
                     source,
                     raw,
+                    finalization_state,
+                    estimated_source,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(external_id) DO UPDATE SET
                     close_ts=excluded.close_ts,
                     symbol=excluded.symbol,
@@ -261,6 +359,8 @@ def replace_journal_entries(db_path: str, items: List[Dict[str, Any]], now: int)
                     net=excluded.net,
                     source=excluded.source,
                     raw=excluded.raw,
+                    finalization_state=excluded.finalization_state,
+                    estimated_source=excluded.estimated_source,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -277,6 +377,8 @@ def replace_journal_entries(db_path: str, items: List[Dict[str, Any]], now: int)
                     item.get("net"),
                     item.get("source", ""),
                     item.get("raw", "{}"),
+                    finalization_state,
+                    estimated_source,
                     now,
                 ),
             )
@@ -429,6 +531,11 @@ def upsert_journal_entries(db_path: str, items: List[Dict[str, Any]], now: int) 
     try:
         cur = conn.cursor()
         for item in items:
+            finalization_state, estimated_source = _derive_finalization_fields(
+                item.get("realized_pnl"),
+                item.get("exit_price"),
+                item.get("raw", "{}"),
+            )
             cur.execute(
                 """
                 INSERT INTO journal_entries (
@@ -445,9 +552,11 @@ def upsert_journal_entries(db_path: str, items: List[Dict[str, Any]], now: int) 
                     net,
                     source,
                     raw,
+                    finalization_state,
+                    estimated_source,
                     updated_at
                 )
-                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
+                VALUES (?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?, ?)
                 ON CONFLICT(external_id) DO UPDATE SET
                     close_ts=excluded.close_ts,
                     symbol=excluded.symbol,
@@ -461,6 +570,8 @@ def upsert_journal_entries(db_path: str, items: List[Dict[str, Any]], now: int) 
                     net=excluded.net,
                     source=excluded.source,
                     raw=excluded.raw,
+                    finalization_state=excluded.finalization_state,
+                    estimated_source=excluded.estimated_source,
                     updated_at=excluded.updated_at
                 """,
                 (
@@ -477,6 +588,8 @@ def upsert_journal_entries(db_path: str, items: List[Dict[str, Any]], now: int) 
                     item.get("net"),
                     item.get("source", ""),
                     item.get("raw", "{}"),
+                    finalization_state,
+                    estimated_source,
                     now,
                 ),
             )
@@ -517,7 +630,8 @@ def get_journal_entries(db_path: str, limit: int = 100, offset: int = 0, search:
             cur.execute(
                 """
                 SELECT id, external_id, close_ts, symbol, side, qty, entry_price, exit_price,
-                       realized_pnl, commission, fees, net, notes, tags, source, raw
+                       realized_pnl, commission, fees, net, notes, tags, source, raw,
+                       finalization_state, estimated_source
                 FROM journal_entries
                 WHERE symbol LIKE ? OR notes LIKE ? OR tags LIKE ?
                 ORDER BY close_ts DESC, id DESC
@@ -529,7 +643,8 @@ def get_journal_entries(db_path: str, limit: int = 100, offset: int = 0, search:
             cur.execute(
                 """
                 SELECT id, external_id, close_ts, symbol, side, qty, entry_price, exit_price,
-                       realized_pnl, commission, fees, net, notes, tags, source, raw
+                       realized_pnl, commission, fees, net, notes, tags, source, raw,
+                       finalization_state, estimated_source
                 FROM journal_entries
                 ORDER BY close_ts DESC, id DESC
                 LIMIT ? OFFSET ?
@@ -555,6 +670,8 @@ def get_journal_entries(db_path: str, limit: int = 100, offset: int = 0, search:
                 "tags": row[13],
                 "source": row[14],
                 "raw": row[15],
+                "finalization_state": row[16],
+                "estimated_source": row[17],
             }
             for row in rows
         ]

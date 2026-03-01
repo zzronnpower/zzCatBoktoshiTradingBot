@@ -69,8 +69,8 @@
         <p>Live futures chart and orderbook with ASTER USDT symbols.</p>
         <div class="nav-links">
           <a href="/">Dashboard</a>
-          <a href="/journal">Boktoshi Trading Journal</a>
           <a href="/manual" class="nav-position-management">Position Management</a>
+          <a href="/journal">Boktoshi Trading Journal</a>
           <a href="/aster-chart" class="active">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
           <a href="/chatlog">ChatLog</a>
@@ -416,17 +416,27 @@
           const maData = Array.isArray(data.ma50) ? data.ma50.map((x) => ({ time: Number(x.time), value: Number(x.value) })) : [];
           const emaFastData = Array.isArray(data.ema_fast) ? data.ema_fast.map((x) => ({ time: Number(x.time), value: Number(x.value) })) : [];
           const emaSlowData = Array.isArray(data.ema_slow) ? data.ema_slow.map((x) => ({ time: Number(x.time), value: Number(x.value) })) : [];
+          const bbMidData = Array.isArray(data.bb_mid) ? data.bb_mid.map((x) => ({ time: Number(x.time), value: Number(x.value) })) : [];
           ma50Series.setData(maData);
-          emaFastSeries.setData(emaFastData);
-          emaSlowSeries.setData(emaSlowData);
+          const isRegime = String(data.strategy || '') === '4H_REGIME_SWITCH_V1';
+          emaFastSeries.setData(isRegime ? emaFastData : emaFastData);
+          emaSlowSeries.setData(isRegime ? bbMidData : emaSlowData);
 
           const entries = Array.isArray(data.entry_markers) ? data.entry_markers : [];
+          const regimes = Array.isArray(data.regime_markers) ? data.regime_markers : [];
           const entryMarkers = entries.map((m) => ({
             time: Number(m.time),
             position: 'belowBar',
             color: '#6fd3a8',
             shape: 'arrowUp',
             text: String(m.text || 'Entry'),
+          }));
+          const regimeMarkers = regimes.map((m) => ({
+            time: Number(m.time),
+            position: 'aboveBar',
+            color: String(m.color || '#b0b9c5'),
+            shape: 'circle',
+            text: String(m.text || 'Regime'),
           }));
 
           const pos = data.position || null;
@@ -439,16 +449,19 @@
               text: `Live ${Number(pos.entry_price).toFixed(2)}`,
             });
           }
-          candleSeries.setMarkers(entryMarkers);
+          candleSeries.setMarkers([...regimeMarkers, ...entryMarkers]);
           applyPositionLines(pos);
 
           const strategyId = data.strategy || '-';
           const signalCount = entries.length;
           const required = data.required_interval || data.interval || '-';
-          const lineLabel = emaFastData.length || emaSlowData.length ? 'EMA20/EMA50' : 'MA50';
+          const lineLabel = isRegime ? 'EMA200/BB Mid' : ((emaFastData.length || emaSlowData.length) ? 'EMA20/EMA50' : 'MA50');
+          const regimeText = isRegime && data.regime_snapshot && data.regime_snapshot.regime
+            ? ` | regime ${String(data.regime_snapshot.regime)}`
+            : '';
           const statusText = pos
-            ? `Strategy overlay: ${strategyId} | ${lineLabel} | ${required} | signals ${signalCount} | position ${pos.position_id || '-'}`
-            : `Strategy overlay: ${strategyId} | ${lineLabel} | ${required} | signals ${signalCount} | no open strategy position`;
+            ? `Strategy overlay: ${strategyId} | ${lineLabel} | ${required} | signals ${signalCount}${regimeText} | position ${pos.position_id || '-'}`
+            : `Strategy overlay: ${strategyId} | ${lineLabel} | ${required} | signals ${signalCount}${regimeText} | no open strategy position`;
           document.getElementById('overlay-status').textContent = statusText;
         } catch (e) {
           clearStrategyOverlay(`Strategy overlay delayed (${e})`);

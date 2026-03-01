@@ -2,7 +2,7 @@ import json
 
 import BoktoshiBotModule.bot_runner as bot_runner_module
 from BoktoshiBotModule.bot_runner import BotRunner
-from app.storage import get_kv, init_db, set_kv
+from app.storage import get_kv, get_trades, init_db, set_kv
 
 
 def make_runner(tmp_path):
@@ -307,3 +307,149 @@ def test_close_all_strategy_positions_closes_all_strategy_owned(tmp_path, monkey
     assert len(close_calls) == 3
     assert {c["positionId"] for c in close_calls} == {"s-btc", "s-eth", "s-sol"}
     assert runner._get_strategy_position_map() == {}
+
+
+def test_regime_strategy_is_listed_and_selectable(tmp_path):
+    runner = make_runner(tmp_path)
+
+    strategy_ids = [item["id"] for item in runner.list_strategies()]
+    assert runner.STRATEGY_REGIME_SWITCH in strategy_ids
+
+    result = runner.set_active_strategy(runner.STRATEGY_REGIME_SWITCH)
+    assert result["success"] is True
+    assert runner.get_active_strategy() == runner.STRATEGY_REGIME_SWITCH
+
+
+def test_regime_strategy_dry_run_opens_with_dynamic_margin_and_state(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+    runner.dry_run = True
+    runner.active_strategy = runner.STRATEGY_REGIME_SWITCH
+
+    monkeypatch.setattr(runner, "_get_closed_4h_candles", lambda: [{"open_time": i * 14_400_000, "close": 2000 + i, "high": 2010 + i, "low": 1990 + i} for i in range(320)])
+    monkeypatch.setattr(
+        bot_runner_module,
+        "evaluate_regime_switch_entry_long_4h",
+        lambda candles: {
+            "signal": True,
+            "reason": "trend_breakout",
+            "entry_type": "TREND_BREAKOUT",
+            "regime": "TREND",
+            "close": 2050.0,
+            "atr14": 20.0,
+            "bb_mid": 2080.0,
+            "last_candle_open_time": 1700000000000,
+        },
+    )
+
+    account = {"boks": {"balance": 1000, "lockedMargin": 0}}
+    positions = []
+    runner._maybe_open_long(1700000100, account, positions)
+
+    trades = get_trades(runner.db_path, limit=1)
+    assert len(trades) == 1
+    assert trades[0]["action"] == "OPEN"
+    assert trades[0]["status"] == "DRY_RUN"
+    assert float(trades[0]["margin"]) <= runner.margin_boks
+
+    state = runner.get_regime_runtime(runner.STRATEGY_REGIME_SWITCH, runner.trade_pair)
+    assert state.get("last_regime") in {"TREND", "RANGE", "NO_TRADE"}
+
+
+def test_regime_strategy_respects_max_two_total_slots(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+    runner.enabled_strategies = [runner.STRATEGY_REGIME_SWITCH]
+    runner._strategy_paused = False
+
+    monkeypatch.setattr(runner, "_manage_open_positions", lambda now, account, positions: None)
+    monkeypatch.setattr(runner, "_available_regime_slots", lambda positions: 2)
+    monkeypatch.setattr(
+        runner,
+        "_collect_regime_candidates",
+        lambda now, account, positions: [
+            {"_symbol": "BTCUSDT", "_score": 10.0, "last_candle_open_time": 1},
+            {"_symbol": "ETHUSDT", "_score": 30.0, "last_candle_open_time": 1},
+            {"_symbol": "SOLUSDT", "_score": 20.0, "last_candle_open_time": 1},
+        ],
+    )
+    monkeypatch.setattr(runner, "_count_regime_open_longs_for_coin", lambda coin, positions: 0)
+
+    opened = []
+    monkeypatch.setattr(
+        runner,
+        "_open_regime_candidate",
+        lambda now, candidate, account, positions: opened.append(candidate["_symbol"]) or True,
+    )
+
+    runner._run_all_strategy_contexts(1700000200, {"boks": {"balance": 1000, "lockedMargin": 0}}, [])
+
+    assert opened == ["ETHUSDT", "SOLUSDT"]
+
+
+def test_regime_collect_candidates_skips_volatility_shock(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+    runner.enabled_strategies = [runner.STRATEGY_REGIME_SWITCH]
+
+    monkeypatch.setattr(runner, "_count_regime_open_longs_for_coin", lambda coin, positions: 0)
+    monkeypatch.setattr(runner, "_set_regime_state", lambda state, slot=None: None)
+    monkeypatch.setattr(runner, "_get_regime_state", lambda slot=None: {})
+    monkeypatch.setattr(
+        runner,
+        "_get_regime_market_snapshot",
+        lambda now, symbol, bars=620: {
+            "candles": [{"open_time": i * 14_400_000, "close": 100 + i, "high": 101 + i, "low": 99 + i} for i in range(260)],
+            "snapshot": {"ok": True, "regime": "TREND", "last_candle_open_time": 1700000000000},
+            "candle_key": 1700000000000,
+        },
+    )
+    monkeypatch.setattr(
+        bot_runner_module,
+        "evaluate_regime_switch_entry_long_4h",
+        lambda candles: {
+            "signal": True,
+            "regime": "TREND",
+            "atr14": 18.0,
+            "atr14_prev": 9.0,
+            "adx14": 30.0,
+            "atr_slope": 0.2,
+            "close": 2000.0,
+            "bb_mid": 2020.0,
+            "last_candle_open_time": 1700000000000,
+        },
+    )
+
+    candidates = runner._collect_regime_candidates(1700000200, {"boks": {"balance": 1000, "lockedMargin": 0}}, [])
+    assert candidates == []
+    metrics = runner.get_regime_tuning_metrics()
+    assert metrics["volatility_shock_skipped_total"] >= 1
+
+
+def test_regime_metrics_track_candidate_open_and_reject(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+    runner.enabled_strategies = [runner.STRATEGY_REGIME_SWITCH]
+    runner._strategy_paused = False
+
+    monkeypatch.setattr(runner, "_manage_open_positions", lambda now, account, positions: None)
+    monkeypatch.setattr(runner, "_available_regime_slots", lambda positions: 1)
+    monkeypatch.setattr(
+        runner,
+        "_collect_regime_candidates",
+        lambda now, account, positions: [
+            {"_symbol": "ETHUSDT", "_score": 30.0, "last_candle_open_time": 1},
+            {"_symbol": "SOLUSDT", "_score": 20.0, "last_candle_open_time": 1},
+        ],
+    )
+    monkeypatch.setattr(runner, "_count_regime_open_longs_for_coin", lambda coin, positions: 0)
+
+    calls = {"n": 0}
+
+    def _open_once(now, candidate, account, positions):
+        calls["n"] += 1
+        return calls["n"] == 1
+
+    monkeypatch.setattr(runner, "_open_regime_candidate", _open_once)
+
+    runner._run_all_strategy_contexts(1700000400, {"boks": {"balance": 1000, "lockedMargin": 0}}, [])
+
+    metrics = runner.get_regime_tuning_metrics()
+    assert metrics["candidates_opened_total"] >= 1
+    assert metrics["candidates_rejected_total"] >= 1

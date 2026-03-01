@@ -23,6 +23,23 @@ class MTCClient:
         self.api_key = api_key
         self.timeout_seconds = timeout_seconds
         self.max_retries = max_retries
+        self.session = requests.Session()
+        self.default_headers = {
+            "Accept": "application/json",
+            "User-Agent": "zzCatBoktoshiTradingBot/1.0",
+        }
+
+    @staticmethod
+    def _looks_like_cloudflare_1015(body_text: str) -> bool:
+        text = str(body_text or "").lower()
+        if not text:
+            return False
+        return (
+            "error 1015" in text
+            or "you are being rate limited" in text
+            or "has banned you temporarily" in text
+            or "cloudflare" in text and "rate limited" in text
+        )
 
     def _headers(self) -> Dict[str, str]:
         if not self.api_key:
@@ -38,11 +55,13 @@ class MTCClient:
         params: Optional[Dict[str, Any]] = None,
     ) -> Dict[str, Any]:
         url = f"{self.base_url}{path}"
-        merged_headers = headers or {}
+        merged_headers = dict(self.default_headers)
+        if headers:
+            merged_headers.update(headers)
         last_error: Optional[Exception] = None
         for attempt in range(self.max_retries + 1):
             try:
-                resp = requests.request(
+                resp = self.session.request(
                     method=method,
                     url=url,
                     headers=merged_headers,
@@ -50,6 +69,12 @@ class MTCClient:
                     params=params,
                     timeout=self.timeout_seconds,
                 )
+                if self._looks_like_cloudflare_1015(resp.text):
+                    raise MTCClientError(
+                        message="Cloudflare rate limit triggered (Error 1015).",
+                        code="CF_1015",
+                        status_code=resp.status_code,
+                    )
                 if 500 <= resp.status_code < 600 and attempt < self.max_retries:
                     time.sleep(0.5 * (attempt + 1))
                     continue
@@ -61,9 +86,18 @@ class MTCClient:
                         code = body.get("code", "")
                         message = body.get("message", message)
                     except Exception:
-                        pass
+                        if resp.status_code == 429:
+                            code = "HTTP_429"
+                            message = "HTTP 429 Too Many Requests"
                     raise MTCClientError(message=message, code=code, status_code=resp.status_code)
-                return resp.json()
+                try:
+                    return resp.json()
+                except Exception as exc:
+                    raise MTCClientError(
+                        message="Invalid non-JSON response from MTC API.",
+                        code="INVALID_RESPONSE",
+                        status_code=resp.status_code,
+                    ) from exc
             except requests.RequestException as exc:
                 last_error = exc
                 if attempt < self.max_retries:

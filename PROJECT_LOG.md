@@ -1,6 +1,6 @@
 # PROJECT_LOG
 
-Last updated: 2026-02-25 (multi-strategy mode + TAOUSDT manual)
+Last updated: 2026-02-25 (4H_REGIME_SWITCH_V1 integration assessment logged)
 Project: `zzCatBoktoshiTradingBot`
 
 ## 1) Project Intent
@@ -1154,3 +1154,305 @@ When a new assistant session starts:
 - Documentation continuity update:
   - appended current request/response trace to `app/templates/chatlog.html`.
   - retained chronological update chain in `PROJECT_LOG.md` for next-session fast resume.
+
+## 56) Latest Update (2026-02-25)
+
+- Added a new migration report page for Freqtrade assessment and integration planning:
+  - New template: `app/templates/fredtrade_migration_report.html`
+  - New route: `GET /fredtrade-migration-report`
+- Report content includes:
+  - detailed evaluation of what Freqtrade is,
+  - integration feasibility with BOktoshi,
+  - Aster compatibility note,
+  - recommended architecture (separate service adapter model),
+  - full endpoint-by-endpoint API mapping plan for implementation.
+- Added direct navigation entry `FredTradeMigration Report` to:
+  - `app/templates/index.html`
+  - `app/templates/strategy_summary.html`
+- Report page style is highlighted with color-coded focus sections (success/warn/info badges and mapping tables) and Vietnamese content with full diacritics.
+
+## 57) Latest Update (2026-02-25)
+
+- Added full pre-implementation assessment for new strategy proposal from `PsudoCode4hSystem.md`:
+  - System target: `4H_REGIME_SWITCH_V1` (TREND/RANGE regime switching on `BTCUSDT`, `ETHUSDT`, `SOLUSDT`).
+  - Feasibility in current Boktoshi architecture: **high** (estimated 8/10) for `LONG-only` first rollout.
+- Integration fit with current codebase was reviewed across:
+  - strategy logic layer (`BoktoshiBotModule/strategy.py`),
+  - runtime decision loop and state handling (`BoktoshiBotModule/bot_runner.py`),
+  - status/strategy APIs and overlay API (`app/main.py`),
+  - operator UI pages (`/manual`, `/strategy-summary`, `/aster-chart`),
+  - regression test surface (`tests/test_bot_runner_flows.py`, `tests/test_strategy_overlay.py`).
+- Critical implementation notes captured before coding:
+  - Current execution payload model is `margin + leverage` (not direct `qty`), so risk-based sizing from pseudo-code must be converted to dynamic margin sizing with hard min/max guards.
+  - Strategy must be evaluated on **closed 4H candles only** (new-candle gate) to avoid over-triggering from 20s poll loop.
+  - Indicator stack required by pseudo-code (`ADX`, `ATR`, `Bollinger`, `Donchian`, ATR slope) is not yet implemented in current strategy module and must be added with deterministic formulas.
+  - Daily drawdown guard (`MAX_DAILY_DRAWDOWN`) and cooldown bars need persisted state in KV to survive restarts.
+  - Overlay contract currently optimized for MA50/EMA lines; new regime strategy requires extended overlay payload for regime/exits/markers.
+- Main risk set documented:
+  - indicator implementation mismatch risk (especially ATR/ADX smoothing);
+  - API load risk if 600-bar lookback is recomputed too frequently;
+  - portfolio concentration risk due to BTC/ETH/SOL correlation;
+  - persistence risk if trailing/cooldown/day-state is not restored after restart.
+- Recommended rollout path logged for next session:
+  - **Phase 1 (recommended):** LONG-only TREND + RANGE with strict risk guards.
+  - **Phase 2:** performance and concentration controls.
+  - **Phase 3:** optional SHORT support only after paper validation.
+- End-of-day operator decision recorded: planning and assessment complete; implementation scheduled for next working session.
+
+## 58) Tích hợp Fredtrade (2026-02-25)
+
+- Đã hoàn tất nghiên cứu toàn diện dự án Freqtrade để phục vụ lộ trình nâng cấp BOktoshi.
+- Đã tạo trang báo cáo riêng: `FredTradeMigration Report` với nội dung tiếng Việt đầy đủ:
+  - Bản chất dự án Freqtrade và năng lực lõi.
+  - Khả năng tích hợp với BOktoshi.
+  - Khả năng kết nối Aster.
+  - Khuyến nghị kiến trúc (service riêng + adapter).
+  - Thiết kế tích hợp chi tiết endpoint-by-endpoint và schema mapping.
+- Kết luận kỹ thuật:
+  - Khả năng tích hợp: cao nếu đi theo mô hình `BOktoshi API/UI + Freqtrade Engine Service`.
+  - Aster: có khả năng kết nối theo hướng CCXT, nhưng cần triển khai theo lộ trình thử nghiệm an toàn trước production.
+- Quyết định vận hành:
+  - Đây là hạng mục lớn, sâu, cần thêm thời gian nghiên cứu.
+  - Tạm dừng triển khai code tích hợp ngay thời điểm hiện tại.
+  - Trạng thái: `Deferred / Resume later`.
+- Ghi chú cho phiên làm việc kế tiếp:
+  - Ưu tiên bắt đầu từ adapter read-only (`status/account/trade-history/logs`), sau đó mới mở các endpoint thao tác lệnh.
+
+## 59) Rate-limit hardening + default paused startup (2026-02-28)
+
+- Mục tiêu vận hành được chốt theo hướng an toàn (profile A): giảm tần suất gọi Boktoshi API để tránh Cloudflare 1015.
+- Thay đổi runtime mặc định:
+  - thêm biến env `STRATEGY_AUTO_START` (mặc định `false`), strategy khởi động ở trạng thái paused cho tới khi operator bấm Resume.
+  - cập nhật `.env.example` để phản ánh cấu hình khởi động an toàn.
+- Hardening MTC client (`BoktoshiBotModule/mtc_client.py`):
+  - dùng `requests.Session()` + header mặc định ổn định (`Accept`, `User-Agent`).
+  - nhận diện Cloudflare 1015 và map thành lỗi chuẩn `CF_1015`.
+  - chuẩn hóa lỗi HTTP 429 thành `HTTP_429`.
+  - trả lỗi `INVALID_RESPONSE` khi API trả non-JSON.
+- Giảm call dư thừa ở bot loop (`BoktoshiBotModule/bot_runner.py`):
+  - không fetch `positions` lại sau mỗi symbol trong vòng lặp strategy.
+  - tách nhịp fetch theo trạng thái:
+    - running: fetch interval >= 20s,
+    - paused: fetch interval >= 60s,
+    - history fetch interval 120s.
+  - khi strategy paused: không chạy strategy open/close evaluation loop.
+- Thêm backoff tự động khi gặp rate limit:
+  - exponential backoff 30s -> 60s -> 120s -> ... (max 300s) cho các call account/positions/history.
+  - có structured log `mtc_backoff_activated` để quan sát.
+- Tối ưu polling frontend:
+  - Dashboard: refresh từ 3s -> 10s, slow cache từ 15s -> 30s.
+  - Manual page: positions/settings/strategies polling giảm còn 10s/30s/60s.
+  - Strategy Summary: polling từ 5s -> 30s.
+- Kết quả verify tại phiên này:
+  - `python -m compileall BoktoshiBotModule app` pass.
+  - `pytest -q tests/test_bot_runner_flows.py tests/test_system_metrics.py` pass (13 passed).
+
+## 60) Navigation order + polling clarification (2026-02-28)
+
+- Điều chỉnh thứ tự menu theo yêu cầu operator: `Position Management` được đưa lên trước `Boktoshi Trading Journal` ở toàn bộ trang chính.
+- Các template đã cập nhật nav order:
+  - `app/templates/index.html`
+  - `app/templates/manual.html`
+  - `app/templates/journal.html`
+  - `app/templates/strategy_summary.html`
+  - `app/templates/eth_chart.html`
+  - `app/templates/aster_trading.html`
+  - `app/templates/fredtrade_migration_report.html`
+  - `app/templates/chatlog.html`
+- Xác nhận nhịp cập nhật `uPnL History` trên Dashboard:
+  - dashboard refresh vòng chính: mỗi `8s`;
+  - dữ liệu slow lane (trade history / pnl history / signals / logs): cache TTL `20s`;
+  - do đó `uPnL History` mặc định cập nhật tối đa mỗi khoảng `20s` (hoặc sớm hơn khi cache bị invalidate bởi thao tác refresh thủ công).
+
+## 61) Claim open position từ unknown -> manual (2026-02-28)
+
+- Vấn đề vận hành: có vị thế mở trên app Boktoshi nhưng không hiện ở bảng Manual/Strategy do ownership map local không chứa `positionId`.
+- Đã xác minh runtime:
+  - `items=1`, `manual=0`, `unknown=1` trước khi xử lý.
+  - position thực tế: `DOGEUSDT LONG`, `positionId=mtc_430008ebb1d9ec20`.
+- Đã xử lý không đổi UI:
+  - claim trực tiếp bằng cách thêm `positionId` vào KV `manual_position_ids` trong DB runtime container.
+- Kết quả sau claim qua `GET /api/open-positions`:
+  - `items=1`, `manual=1`, `unknown=0`.
+  - vị thế DOGE đã vào nhóm manual và có thể đóng/manage từ trang Position Management.
+
+## 62) Dashboard manual force refresh button (2026-02-28)
+
+- Đã thêm nút `Refresh Dashboard` đặt ngay trong cụm `Live` ở header dashboard (`app/templates/index.html`).
+- UX nút theo yêu cầu:
+  - nền cam,
+  - chữ đậm (bold),
+  - trạng thái disable + đổi text `Refreshing...` khi đang chạy.
+- Hành vi khi bấm nút:
+  - force refresh toàn bộ dữ liệu dashboard (status/account/open-positions/system metrics + history/pnl/signals/logs), không chờ TTL cache.
+  - reset `slowCache.lastFetchedAt` để bắt buộc lấy dữ liệu mới nhất.
+  - cố gắng gọi `POST /api/journal/refresh` trước khi refresh để dữ liệu finalized gần thời gian thực hơn.
+- Tối ưu hiển thị:
+  - `live-bar` cho phép wrap để nút mới không vỡ layout trên viewport nhỏ.
+
+## 63) 4H_REGIME_SWITCH_V1 full rollout (2026-03-01)
+
+- Implemented and integrated new strategy `4H_REGIME_SWITCH_V1` end-to-end as selectable runtime strategy.
+- Strategy core (`BoktoshiBotModule/strategy.py`):
+  - added deterministic indicator stack for regime logic:
+    - `ATR(14)`, `ADX(14)`, `EMA200`, `RSI(14)`, Bollinger(20,2), Donchian(20/10), ATR slope.
+  - added regime snapshot + entry/management evaluators:
+    - `compute_regime_switch_snapshot(...)`
+    - `evaluate_regime_switch_entry_long_4h(...)`
+    - `evaluate_regime_switch_manage_long_4h(...)`
+  - added overlay helper outputs:
+    - Bollinger lines, regime markers, regime long-entry markers.
+- Bot runtime integration (`BoktoshiBotModule/bot_runner.py`):
+  - new strategy id constant: `4H_REGIME_SWITCH_V1` and strategy registry entry.
+  - new persisted runtime state key: `regime_switch_state` (per slot `strategy:symbol`).
+  - added 4H closed-candle gate, daily drawdown block, and cooldown bars after exits.
+  - added dynamic risk-to-margin sizing conversion for regime entries (exchange payload remains `margin + leverage`).
+  - added TREND/RANGE exit handling from strategy state machine via `_manage_regime_strategy_position(...)`.
+  - updated `run_all` mode messaging to include all configured strategies.
+- API + UI integration:
+  - `/api/status` now exposes regime runtime metadata under `strategy.regime_runtime` when active.
+  - `/api/strategy/overlay` now supports regime overlays:
+    - `EMA200`, Bollinger bands, regime markers, regime snapshot payload.
+  - `ASTER Chart` overlay status and markers updated for regime visualization.
+  - `Strategy Summary` page updated with dedicated `4H Regime Switch V1` explanation block and runtime chips.
+- Validation and regression:
+  - added tests:
+    - `tests/test_bot_runner_flows.py` (strategy listing/select + regime dry-run entry/state path)
+    - `tests/test_strategy_overlay.py` (regime overlay contract)
+  - test result: `25 passed`.
+  - compile check: `python3 -m compileall app BoktoshiBotModule tests` passed.
+
+## 64) 4H regime deep tuning phases 1-5 complete (2026-03-01)
+
+- Created dedicated execution tracker file for this scope:
+  - `Tunning4HRegimeStratery`
+  - includes: plan, checklist, dedicated dev log, and phase pass/fail table.
+- Phase 1 (Concentration lock) implemented:
+  - hard caps for regime strategy:
+    - max total strategy longs = `2`
+    - max per symbol = `1`
+  - same-candle multi-signal allocator now opens deterministic top-ranked candidates only.
+- Phase 2 (Performance optimization) implemented:
+  - added in-memory 4H regime market cache (`_regime_market_cache`) with short reuse window.
+  - management and entry candidate flows now reuse the same cached snapshot path.
+- Phase 3 (Concentration scoring) implemented:
+  - added deterministic score model (`regime bias + ADX + ATR slope + ATR/close efficiency`).
+  - allocator opens candidates by score order until slot cap is filled.
+- Phase 4 (Tuning guards) implemented:
+  - added volatility-shock skip guard using `atr14` vs `atr14_prev` multiplier.
+  - preserved dynamic risk-to-margin sizing and existing cooldown/day-drawdown persistence.
+- Phase 5 (Validation) completed:
+  - compile check: `python3 -m compileall app BoktoshiBotModule tests` passed.
+  - full test run: `pytest -q` passed (`27 passed`).
+  - API smoke checks passed:
+    - `GET /api/strategies`
+    - `POST /api/strategy/select` (`4H_REGIME_SWITCH_V1`)
+    - `GET /api/status`
+    - `GET /api/strategy/overlay`
+- Runtime stack confirmation:
+  - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d`
+  - container `CatBoktoshiTradingBot-dev` remains running.
+
+## 65) Regime tuning metrics surfaced to Dashboard (2026-03-01)
+
+- Extended runtime observability for `4H_REGIME_SWITCH_V1` in `BoktoshiBotModule/bot_runner.py`:
+  - added dedicated counters:
+    - `cap_blocked_total`
+    - `symbol_cap_blocked_total`
+    - `volatility_shock_skipped_total`
+    - `candidates_total`
+    - `candidates_opened_total`
+    - `candidates_rejected_total`
+  - added derived metric: `open_rate`.
+- Updated `GET /api/system/metrics` in `app/main.py`:
+  - new payload section: `metrics.regime_tuning`.
+- Updated Dashboard `System Health` panel (`app/templates/index.html`) to display regime-tuning counters and open-rate row.
+- Added/updated tests:
+  - `tests/test_system_metrics.py` now validates presence/shape of `metrics.regime_tuning`.
+  - `tests/test_bot_runner_flows.py` adds checks for candidate open/reject counters and volatility-shock counter updates.
+- Verification:
+  - `python3 -m compileall app BoktoshiBotModule tests` passed.
+  - `pytest -q` passed (`28 passed`).
+  - API smoke confirms `/api/system/metrics` includes expected `regime_tuning` keys.
+
+## 66) Dashboard anti-rate toggle + manual-only PnL history fetch (2026-03-01)
+
+- Updated Dashboard controls in `app/templates/index.html`:
+  - added new toggle button next to `Refresh Dashboard`:
+    - default label: `Toggle Anti Rate Limit Profit`
+    - active label: `Toggle To Normal Running Profile`
+- Added two refresh profiles on client side:
+  - Normal profile:
+    - core polling every `8s`
+    - slow-lane TTL `20s`
+    - slow-lane auto enabled
+  - Anti-rate profile:
+    - core polling every `30s`
+    - slow-lane TTL `120s`
+    - slow-lane auto disabled
+- Implemented manual-only `PnL History` data fetch:
+  - `/api/pnl-history` is no longer auto-fetched by timer.
+  - `/api/pnl-history` is fetched only when clicking `Refresh Dashboard`.
+  - `Refresh Finalized PnL` and `Clear Stale Pending Queue` no longer trigger `pnl-history` fetch.
+- Profile mode is persisted in `localStorage` (`dashboard_profile_mode`) and reapplied on reload.
+- Live status text now shows active profile label to avoid operator confusion.
+
+## 67) Roadmap closure: Phase C persisted metadata + API/concurrency tests (2026-03-01)
+
+- Completed remaining roadmap gaps for Phase C and Phase D.
+
+- Phase C (Data Quality) completed with persisted journal metadata:
+  - `app/storage.py`
+    - added schema migration-on-startup in `init_db(...)`:
+      - new `journal_entries` columns:
+        - `finalization_state` (`PENDING|ESTIMATED|FINALIZED`)
+        - `estimated_source` (`none|snapshot|market_hint|formula`)
+      - automatic backfill for existing rows with missing/invalid metadata.
+    - updated upsert/replace flows to persist both fields on write.
+    - updated read model (`get_journal_entries`) to return both persisted fields.
+  - `app/main.py`
+    - `_decorate_journal_row(...)` now prefers persisted `finalization_state/estimated_source` and only falls back to runtime inference when missing.
+  - added migration utility script:
+    - `scripts/migrate_journal_finalization_fields.py`
+    - purpose: manual re-run/verification of metadata normalization outside startup path.
+
+- Phase A typed payload schemas finalized:
+  - added `app/schemas.py` with typed structures:
+    - `CloseRecord`
+    - `IntegrityReport`
+    - `MetricsPayload`
+  - wired type hints in `app/main.py` for close snapshot and metrics/integrity flows.
+
+- Phase D test additions (API-level + concurrency):
+  - new file `tests/test_journal_api_sync.py`:
+    - verifies `/api/journal/refresh` behavior (sync trigger + pending count result)
+    - verifies `/api/system/integrity-report` contract path
+    - verifies journal sync trigger/lock concurrency behavior
+  - updated `tests/test_journal_storage_dedupe.py` to assert persisted finalization fields.
+
+- Roadmap state updated:
+  - `NEXT_ROADMAP.md` marked `COMPLETED (2026-03-01)` with all items checked.
+  - `CHECKLIST_CAI_THIEN_HE_THONG.md` execution log updated with roadmap closure note.
+
+- Validation:
+  - `python3 -m compileall app tests scripts` passed.
+  - `pytest -q` passed (`32 passed`).
+  - dev stack restart: `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` (container running).
+
+- Note:
+  - running `scripts/migrate_journal_finalization_fields.py` against local mounted db in this session returned `sqlite3.OperationalError: attempt to write a readonly database`; startup auto-migration path remains active in app runtime where DB is writable.
+
+## 68) Hotfix: server startup failure after roadmap typed schemas (2026-03-01)
+
+- Incident:
+  - user reported server appears down.
+  - container logs showed FastAPI/Pydantic crash on startup route-model build:
+    - `PydanticUserError: Please use typing_extensions.TypedDict instead of typing.TypedDict on Python < 3.12`.
+- Root cause:
+  - `app/schemas.py` imported `TypedDict` from `typing` while runtime image uses Python 3.11.
+- Fix:
+  - changed import to `from typing_extensions import TypedDict` in `app/schemas.py`.
+- Verification:
+  - `docker compose ... up -d` keeps service running.
+  - `GET /api/status` returns `200`.
+  - container logs show successful startup and normal API traffic after reload.

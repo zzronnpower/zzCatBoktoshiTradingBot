@@ -1,0 +1,110 @@
+# Tunning4HRegimeStratery
+
+Last updated: 2026-03-01
+Strategy: `4H_REGIME_SWITCH_V1`
+Scope: Deep optimization for concentration + performance with strict 2-long cap.
+
+## Objective
+
+- Keep strategy LONG-only.
+- Enforce max 2 strategy-owned LONG positions at the same time.
+- Keep max 1 strategy-owned LONG per symbol.
+- Evaluate signals on closed 4H candles only.
+- Reduce duplicate indicator/candle work and API load.
+- Keep runtime safety: cooldown, daily drawdown block, rate-limit backoff.
+
+## Phase Plan
+
+### Phase 1 - Concentration lock
+
+- Add hard caps:
+  - `REGIME_MAX_OPEN_LONGS_TOTAL = 2`
+  - `REGIME_MAX_OPEN_LONGS_PER_SYMBOL = 1`
+- Block new regime entries when cap reached.
+- Add deterministic top-N allocation for same-candle multi-symbol opportunities.
+
+### Phase 2 - Performance optimization
+
+- Add closed-4H snapshot cache per symbol.
+- Reuse cached snapshot in both manage and entry paths in same runtime window.
+- Avoid repeated heavy recomputation when candle key does not change.
+
+### Phase 3 - Concentration scoring
+
+- Build candidate list per 4H decision window.
+- Score candidates deterministically with regime quality + ADX + ATR slope and risk distance.
+- Open only top-ranked candidates up to remaining slots.
+
+### Phase 4 - Tuning guards
+
+- Add volatility-shock block for abnormal ATR expansion.
+- Keep risk-to-margin sizing with concentration discount.
+- Keep cooldown/day drawdown in persisted regime state.
+
+### Phase 5 - Validation and rollout
+
+- Extend tests for cap and ranking behavior.
+- Run compile + full pytest.
+- Run local API smoke checks for strategy list/select/status/overlay.
+
+## Checklist
+
+- [x] Phase 1 implemented and verified.
+- [x] Phase 2 implemented and verified.
+- [x] Phase 3 implemented and verified.
+- [x] Phase 4 implemented and verified.
+- [x] Phase 5 validation run complete.
+
+## Development Log
+
+### 2026-03-01
+
+- Created dedicated tuning plan/checklist/log file for this scope.
+- Prepared execution plan to implement phases 1 -> 5 in current session.
+- Implemented strict concentration controls for regime strategy:
+  - max total strategy longs = 2,
+  - max per symbol = 1,
+  - deterministic top-score allocation for same-candle multi-signal candidates.
+- Implemented deep runtime optimization path:
+  - added 4H regime market snapshot cache (`~90s` reuse window),
+  - shared cached snapshot across management and entry collection paths.
+- Implemented concentration scoring and candidate allocator:
+  - candidate score includes regime bias, ADX, ATR slope, ATR/close efficiency.
+  - allocator opens top-ranked opportunities up to remaining slots.
+- Implemented tuning guard updates:
+  - volatility-shock skip using `atr14/atr14_prev` multiplier guard,
+  - preserved cooldown/day drawdown persistence and dynamic risk-to-margin sizing.
+- Added regression tests for the new controls:
+  - cap/ranking open limit behavior,
+  - volatility-shock candidate suppression.
+- Validation:
+  - `python3 -m compileall app BoktoshiBotModule tests` passed,
+  - `pytest -q` passed (`27 passed`),
+  - API smoke passed for `/api/strategies`, `/api/strategy/select`, `/api/status`, `/api/strategy/overlay`.
+
+### 2026-03-01 (Regime tuning observability extension)
+
+- Added dedicated runtime counters for regime tuning decisions in bot runner:
+  - `cap_blocked_total`
+  - `symbol_cap_blocked_total`
+  - `volatility_shock_skipped_total`
+  - `candidates_total`
+  - `candidates_opened_total`
+  - `candidates_rejected_total`
+  - derived `open_rate`
+- Exposed counters via `GET /api/system/metrics` under `metrics.regime_tuning`.
+- Updated Dashboard `System Health` panel to display regime tuning counters and open rate.
+- Added test coverage for new metrics contract and counter behavior.
+- Validation:
+  - `pytest -q` passed (`28 passed`)
+  - API smoke confirms `metrics.regime_tuning` payload is present.
+
+## Phase Report (to be updated after execution)
+
+| Phase | Status | Evidence |
+| --- | --- | --- |
+| Phase 1 | PASS | Cap logic + deterministic top-2 open flow implemented and tested. |
+| Phase 2 | PASS | 4H snapshot cache and duplicate compute reduction path implemented. |
+| Phase 3 | PASS | Candidate scoring + slot-based allocator implemented and validated. |
+| Phase 4 | PASS | Volatility-shock and safety guards integrated without regressions. |
+| Phase 5 | PASS | Compile + full pytest + API smoke checks all passed. |

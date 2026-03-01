@@ -8,7 +8,14 @@ from .hyperliquid_client import HyperliquidClient
 from .mtc_client import MTCClient, MTCClientError
 from .risk import build_long_sl_tp_prices, build_short_sl_tp_prices, parse_total_capital
 from .storage import add_equity_snapshot, add_log, add_signal, add_trade, get_kv, set_kv
-from .strategy import evaluate_exit_ema_cross_down_15m, evaluate_long_ema_rsi_15m, evaluate_long_ma50_cross_3_candles
+from .strategy import (
+    compute_regime_switch_snapshot,
+    evaluate_exit_ema_cross_down_15m,
+    evaluate_long_ema_rsi_15m,
+    evaluate_long_ma50_cross_3_candles,
+    evaluate_regime_switch_entry_long_4h,
+    evaluate_regime_switch_manage_long_4h,
+)
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -30,11 +37,25 @@ class BotRunner:
     MANUAL_MAX_POSITIONS = 3
     STRATEGY_MA50 = "MA50_4H_CROSSUP_3C_LONG_ONLY"
     STRATEGY_EMA_RSI = "EMA_RSI_15M_ETH_ONLY"
+    STRATEGY_REGIME_SWITCH = "4H_REGIME_SWITCH_V1"
     STRATEGY_TARGET_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT"]
     EMA_STATE_KEY = "ema_strategy_state"
+    REGIME_STATE_KEY = "regime_switch_state"
     STRATEGY_POSITION_IDS_KEY = "strategy_position_ids"
     ENABLED_STRATEGIES_KEY = "enabled_strategies"
     ACTIVE_STRATEGY_KEY = "active_strategy"
+
+    REGIME_RISK_PER_TRADE = 0.01
+    REGIME_MAX_OPEN_LONGS_TOTAL = 2
+    REGIME_MAX_OPEN_LONGS_PER_SYMBOL = 1
+    REGIME_MAX_DAILY_DRAWDOWN = 0.03
+    REGIME_COOLDOWN_BARS_AFTER_EXIT = 3
+    REGIME_TREND_STOP_ATR_MULT = 1.5
+    REGIME_TREND_TRAIL_ATR_MULT = 2.0
+    REGIME_MOVE_STOP_TO_BE_ATR = 1.0
+    REGIME_RANGE_STOP_ATR_MULT = 1.2
+    REGIME_RANGE_MOVE_SL_TO_BE_R = 1.0
+    REGIME_VOLATILITY_SHOCK_MULT = 1.8
 
     def __init__(
         self,
@@ -51,6 +72,7 @@ class BotRunner:
         sl_capital_pct: float,
         tp_capital_pct: float,
         max_positions: int,
+        strategy_auto_start: bool = False,
     ) -> None:
         self.db_path = db_path
         self.client = MTCClient(base_url, api_key)
@@ -75,9 +97,53 @@ class BotRunner:
         self._trade_timestamps: Deque[int] = deque()
         self._trade_lock = threading.Lock()
         self._state_lock = threading.Lock()
-        self._strategy_paused = False
+        self._strategy_paused = not bool(strategy_auto_start)
         self.active_strategy = self.STRATEGY_MA50
         self.enabled_strategies: List[str] = [self.STRATEGY_MA50]
+        self.running_fetch_seconds = max(int(self.poll_seconds), 20)
+        self.paused_fetch_seconds = max(int(self.poll_seconds) * 3, 60)
+        self.history_fetch_seconds = 120
+        self._last_remote_fetch_ts = 0
+        self._last_history_fetch_ts = 0
+        self._api_backoff_until_ts = 0
+        self._api_backoff_step = 0
+        self._last_backoff_log_ts = 0
+        self._regime_market_cache: Dict[str, Dict[str, Any]] = {}
+        self._regime_tuning_metrics: Dict[str, int] = {
+            "cap_blocked_total": 0,
+            "symbol_cap_blocked_total": 0,
+            "volatility_shock_skipped_total": 0,
+            "candidates_total": 0,
+            "candidates_opened_total": 0,
+            "candidates_rejected_total": 0,
+        }
+
+    def _is_rate_limited_error(self, exc: MTCClientError) -> bool:
+        code = str(getattr(exc, "code", "") or "").upper()
+        text = str(exc or "").lower()
+        return code in {"CF_1015", "HTTP_429"} or "1015" in text or "rate limit" in text
+
+    def _register_rate_limit_backoff(self, now: int, exc: MTCClientError, source: str) -> None:
+        if not self._is_rate_limited_error(exc):
+            return
+        self._api_backoff_step = min(self._api_backoff_step + 1, 5)
+        delay = min(300, 30 * (2 ** (self._api_backoff_step - 1)))
+        self._api_backoff_until_ts = max(self._api_backoff_until_ts, now + delay)
+        if now - self._last_backoff_log_ts >= 10:
+            self._log_structured(
+                now,
+                "WARN",
+                "mtc_backoff_activated",
+                source=source,
+                error_code=exc.code,
+                backoff_seconds=delay,
+                backoff_until=self._api_backoff_until_ts,
+            )
+            self._last_backoff_log_ts = now
+
+    def _clear_rate_limit_backoff(self) -> None:
+        self._api_backoff_step = 0
+        self._api_backoff_until_ts = 0
 
     def get_runtime_settings(self) -> Dict[str, float]:
         with self._state_lock:
@@ -88,6 +154,18 @@ class BotRunner:
                 "tp_capital_pct": float(self.tp_capital_pct),
             }
 
+    def _inc_regime_metric(self, key: str, delta: int = 1) -> None:
+        if key not in self._regime_tuning_metrics:
+            return
+        self._regime_tuning_metrics[key] = max(self._regime_tuning_metrics[key] + int(delta), 0)
+
+    def get_regime_tuning_metrics(self) -> Dict[str, Any]:
+        metrics: Dict[str, Any] = dict(self._regime_tuning_metrics)
+        total = max(_to_int(metrics.get("candidates_total", 0), 0), 0)
+        opened = max(_to_int(metrics.get("candidates_opened_total", 0), 0), 0)
+        metrics["open_rate"] = (opened / total) if total > 0 else 0.0
+        return metrics
+
     def get_active_strategy(self) -> str:
         return self.active_strategy
 
@@ -96,6 +174,21 @@ class BotRunner:
 
     def get_strategy_mode(self) -> str:
         return "all" if len(self.enabled_strategies) > 1 else "single"
+
+    def get_regime_runtime(self, strategy_id: Optional[str] = None, symbol: Optional[str] = None) -> Dict[str, Any]:
+        slot = self._strategy_slot_key(strategy_id or self.active_strategy, symbol or self.trade_pair)
+        state = self._get_regime_state(slot)
+        if not state:
+            return {}
+        return {
+            "slot": slot,
+            "last_regime": str(state.get("last_regime", "")),
+            "cooldown_remaining_bars": _to_int(state.get("cooldown_remaining_bars", 0), 0),
+            "trading_blocked_today": bool(state.get("trading_blocked_today", False)),
+            "day_drawdown_pct": _to_float(state.get("day_drawdown_pct", 0.0), 0.0),
+            "last_processed_candle": _to_int(state.get("last_processed_candle", 0), 0),
+            "regime_at_entry": str(state.get("regime_at_entry", "")),
+        }
 
     def list_strategies(self) -> List[Dict[str, str]]:
         return [
@@ -108,6 +201,11 @@ class BotRunner:
                 "id": self.STRATEGY_EMA_RSI,
                 "label": "EMA20/50 + RSI filter 15m (BTC/ETH/SOL)",
                 "entry": "EMA20 cross above EMA50 with RSI in 50-70 band on closed 15m candle for BTCUSDT/ETHUSDT/SOLUSDT.",
+            },
+            {
+                "id": self.STRATEGY_REGIME_SWITCH,
+                "label": "4H Regime Switch V1 (BTC/ETH/SOL)",
+                "entry": "Closed 4H candle regime detector (TREND/RANGE) with Donchian breakout or BB/RSI mean reversion, long-only.",
             },
         ]
 
@@ -150,7 +248,7 @@ class BotRunner:
         return self._set_enabled_strategies(
             self._valid_strategy_ids(),
             now=int(time.time()),
-            message="Strategy mode switched to ALL. Both strategies are enabled.",
+            message="Strategy mode switched to ALL. All configured strategies are enabled.",
         )
 
     def apply_runtime_settings(self, payload: Dict[str, Any]) -> Dict[str, float]:
@@ -359,21 +457,44 @@ class BotRunner:
                 time.sleep(self.poll_seconds)
                 continue
 
+            if self._api_backoff_until_ts > now:
+                time.sleep(self.poll_seconds)
+                continue
+
+            fetch_interval = self.paused_fetch_seconds if paused else self.running_fetch_seconds
+            if self._last_remote_fetch_ts and (now - self._last_remote_fetch_ts) < fetch_interval:
+                time.sleep(self.poll_seconds)
+                continue
+
             try:
                 self._tick(now)
+                self._last_remote_fetch_ts = now
             except Exception as exc:
                 add_log(self.db_path, now, "ERROR", f"Tick failure: {exc}")
 
             time.sleep(self.poll_seconds)
 
     def _tick(self, now: int) -> None:
+        paused = self.is_strategy_paused()
         account = self._fetch_account(now)
         positions = self._fetch_positions(now)
         self._sync_owned_position_ids(now, positions)
-        history = self._fetch_history(now)
+        history: List[Dict[str, Any]] = []
+        need_history_fetch = (not self._last_history_fetch_ts) or (now - self._last_history_fetch_ts >= self.history_fetch_seconds)
+        if need_history_fetch:
+            history = self._fetch_history(now)
+            self._last_history_fetch_ts = now
+        else:
+            cached_history = get_kv(self.db_path, "last_history", "[]")
+            try:
+                parsed_history = json.loads(cached_history)
+            except Exception:
+                parsed_history = []
+            history = parsed_history if isinstance(parsed_history, list) else []
         self._record_equity(now, account, positions)
-        self._run_all_strategy_contexts(now, account, positions)
-        if now % 3600 < self.poll_seconds:
+        if not paused:
+            self._run_all_strategy_contexts(now, account, positions)
+        if (not paused) and now % 3600 < self.poll_seconds:
             self._maybe_daily_claim(now)
         set_kv(self.db_path, "last_history", json.dumps(history))
 
@@ -382,12 +503,53 @@ class BotRunner:
         selected_strategy = self.enabled_strategies[0] if self.enabled_strategies else self.STRATEGY_MA50
         selected_pair = self.default_trade_pair
         for strategy_id in self.enabled_strategies:
+            if strategy_id == self.STRATEGY_REGIME_SWITCH:
+                for symbol in self.STRATEGY_TARGET_SYMBOLS:
+                    self._set_strategy_context(strategy_id, symbol)
+                    self._manage_open_positions(now, account, positions)
+
+                if not paused:
+                    available_slots = self._available_regime_slots(positions)
+                    if available_slots > 0:
+                        candidates = self._collect_regime_candidates(now, account, positions)
+                        ranked = sorted(candidates, key=lambda x: _to_float(x.get("_score", 0.0), 0.0), reverse=True)
+                        opened = 0
+                        for candidate in ranked:
+                            if opened >= available_slots:
+                                break
+                            symbol = str(candidate.get("_symbol", "") or "")
+                            if not symbol:
+                                continue
+                            if self._count_regime_open_longs_for_coin(self._normalize_coin(symbol), positions) >= self.REGIME_MAX_OPEN_LONGS_PER_SYMBOL:
+                                continue
+                            try:
+                                if self._open_regime_candidate(now, candidate, account, positions):
+                                    opened += 1
+                                    self._inc_regime_metric("candidates_opened_total", 1)
+                                else:
+                                    self._inc_regime_metric("candidates_rejected_total", 1)
+                            except MTCClientError as exc:
+                                self._inc_regime_metric("candidates_rejected_total", 1)
+                                self._log_structured(
+                                    now,
+                                    "ERROR",
+                                    "regime_open_failed",
+                                    symbol=symbol,
+                                    error=str(exc),
+                                    error_code=exc.code,
+                                )
+                        skipped_by_slots = max(len(ranked) - min(len(ranked), available_slots), 0)
+                        if skipped_by_slots > 0:
+                            self._inc_regime_metric("candidates_rejected_total", skipped_by_slots)
+                    else:
+                        self._inc_regime_metric("cap_blocked_total", 1)
+                    continue
+
             for symbol in self.STRATEGY_TARGET_SYMBOLS:
                 self._set_strategy_context(strategy_id, symbol)
                 self._manage_open_positions(now, account, positions)
                 if not paused:
                     self._maybe_open_long(now, account, positions)
-                positions = self._fetch_positions(now)
         self._set_strategy_context(selected_strategy, selected_pair)
 
     def _set_strategy_context(self, strategy_id: str, symbol: str) -> None:
@@ -403,6 +565,8 @@ class BotRunner:
         now = int(time.time())
         with self._state_lock:
             if self._strategy_paused:
+                set_kv(self.db_path, "bot_status", "paused")
+                set_kv(self.db_path, "strategy_state", "paused")
                 return {"success": True, "paused": True, "message": "Strategy is already paused."}
             self._strategy_paused = True
         set_kv(self.db_path, "bot_status", "paused")
@@ -414,6 +578,8 @@ class BotRunner:
         now = int(time.time())
         with self._state_lock:
             if not self._strategy_paused:
+                set_kv(self.db_path, "bot_status", "running")
+                set_kv(self.db_path, "strategy_state", "running")
                 return {"success": True, "paused": False, "message": "Strategy is already running."}
             self._strategy_paused = False
         set_kv(self.db_path, "bot_status", "running")
@@ -429,9 +595,11 @@ class BotRunner:
             notices = account.get("notices", []) if isinstance(account, dict) else []
             if notices:
                 set_kv(self.db_path, "notices", json.dumps(notices))
+            self._clear_rate_limit_backoff()
             return account if isinstance(account, dict) else {}
         except MTCClientError as exc:
             set_kv(self.db_path, "account_ok", "false")
+            self._register_rate_limit_backoff(now, exc, "account")
             add_log(self.db_path, now, "ERROR", f"Account fetch failed: {exc} ({exc.code})")
             return {}
 
@@ -440,8 +608,10 @@ class BotRunner:
             response = self.client.get_positions()
             set_kv(self.db_path, "positions", json.dumps(response))
             positions = response.get("positions", response if isinstance(response, list) else [])
+            self._clear_rate_limit_backoff()
             return positions if isinstance(positions, list) else []
         except MTCClientError as exc:
+            self._register_rate_limit_backoff(now, exc, "positions")
             add_log(self.db_path, now, "ERROR", f"Positions fetch failed: {exc} ({exc.code})")
             return []
 
@@ -449,10 +619,12 @@ class BotRunner:
         try:
             response = self.client.get_history(limit=100)
             history = response.get("history", response.get("items", response))
+            self._clear_rate_limit_backoff()
             if isinstance(history, list):
                 return history
             return []
         except MTCClientError as exc:
+            self._register_rate_limit_backoff(now, exc, "history")
             add_log(self.db_path, now, "ERROR", f"History fetch failed: {exc} ({exc.code})")
             return []
 
@@ -614,6 +786,118 @@ class BotRunner:
         parsed.pop(self._strategy_slot_key(), None)
         set_kv(self.db_path, self.EMA_STATE_KEY, json.dumps(parsed))
 
+    def _get_regime_state_map(self) -> Dict[str, Dict[str, Any]]:
+        raw = get_kv(self.db_path, self.REGIME_STATE_KEY, "")
+        if not raw:
+            return {}
+        try:
+            parsed = json.loads(raw)
+        except Exception:
+            return {}
+        if not isinstance(parsed, dict):
+            return {}
+        out: Dict[str, Dict[str, Any]] = {}
+        for k, v in parsed.items():
+            if isinstance(v, dict):
+                out[str(k)] = v
+        return out
+
+    def _get_regime_state(self, slot: Optional[str] = None) -> Dict[str, Any]:
+        selected_slot = slot or self._strategy_slot_key()
+        return self._get_regime_state_map().get(selected_slot, {})
+
+    def _set_regime_state(self, state: Dict[str, Any], slot: Optional[str] = None) -> None:
+        selected_slot = slot or self._strategy_slot_key()
+        value = self._get_regime_state_map()
+        value[selected_slot] = state
+        set_kv(self.db_path, self.REGIME_STATE_KEY, json.dumps(value))
+
+    def _patch_regime_state(self, patch: Dict[str, Any], slot: Optional[str] = None) -> Dict[str, Any]:
+        selected_slot = slot or self._strategy_slot_key()
+        state = self._get_regime_state(selected_slot)
+        state.update(patch)
+        self._set_regime_state(state, selected_slot)
+        return state
+
+    def _clear_regime_state(self, slot: Optional[str] = None) -> None:
+        selected_slot = slot or self._strategy_slot_key()
+        value = self._get_regime_state_map()
+        value.pop(selected_slot, None)
+        set_kv(self.db_path, self.REGIME_STATE_KEY, json.dumps(value))
+
+    @staticmethod
+    def _current_day_key(now: int) -> str:
+        return time.strftime("%Y-%m-%d", time.gmtime(now))
+
+    @staticmethod
+    def _account_total_equity(account: Dict[str, Any], positions: List[Dict[str, Any]]) -> float:
+        boks = account.get("boks", {}) if isinstance(account, dict) else {}
+        balance = _to_float(boks.get("balance", 0), 0.0)
+        locked = _to_float(boks.get("lockedMargin", 0), 0.0)
+        unrealized = sum(_to_float(p.get("unrealizedPnl", 0), 0.0) for p in positions)
+        return max(balance + locked + unrealized, 0.0)
+
+    def _regime_entry_key(self) -> str:
+        return f"last_entry_candle_regime:{self._strategy_slot_key()}"
+
+    def _strategy_owned_positions_for(self, strategy_id: str, positions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        strategy_map = self._get_strategy_position_map()
+        prefix = f"{str(strategy_id or '').upper().strip()}:"
+        owned: List[Dict[str, Any]] = []
+        seen: set[str] = set()
+        for slot, pid in strategy_map.items():
+            if not str(slot).upper().startswith(prefix):
+                continue
+            sid = str(pid or "").strip()
+            if not sid or sid in seen:
+                continue
+            pos = self._find_position_by_id(positions, sid)
+            if pos is None:
+                continue
+            side = str(pos.get("side", "")).upper()
+            if side != "LONG":
+                continue
+            owned.append(pos)
+            seen.add(sid)
+        return owned
+
+    def _count_strategy_open_positions(self, positions: List[Dict[str, Any]]) -> int:
+        return len(self._strategy_owned_positions_for(self.active_strategy, positions))
+
+    def _count_regime_open_longs_total(self, positions: List[Dict[str, Any]]) -> int:
+        return len(self._strategy_owned_positions_for(self.STRATEGY_REGIME_SWITCH, positions))
+
+    def _count_regime_open_longs_for_coin(self, coin: str, positions: List[Dict[str, Any]]) -> int:
+        target = self._normalize_coin(coin)
+        return sum(1 for pos in self._strategy_owned_positions_for(self.STRATEGY_REGIME_SWITCH, positions) if str(pos.get("coin", "")).upper() == target)
+
+    def _available_regime_slots(self, positions: List[Dict[str, Any]]) -> int:
+        return max(self.REGIME_MAX_OPEN_LONGS_TOTAL - self._count_regime_open_longs_total(positions), 0)
+
+    @staticmethod
+    def _score_regime_candidate(signal: Dict[str, Any]) -> float:
+        regime = str(signal.get("regime", "NO_TRADE"))
+        adx_val = _to_float(signal.get("adx14", 0.0), 0.0)
+        atr_slope = _to_float(signal.get("atr_slope", 0.0), 0.0)
+        close = max(_to_float(signal.get("close", 0.0), 0.0), 1e-9)
+        atr = max(_to_float(signal.get("atr14", 0.0), 0.0), 1e-9)
+        breakout_strength = atr / close
+        regime_bias = 1.0 if regime == "TREND" else 0.4
+        return (regime_bias * 100.0) + adx_val + (atr_slope * 10.0) + (breakout_strength * 10000.0)
+
+    def _build_regime_margin(self, entry_price: float, stop_price: float, equity: float, positions: List[Dict[str, Any]]) -> float:
+        stop_distance = abs(entry_price - stop_price)
+        if stop_distance <= 0:
+            return max(1.0, float(self.margin_boks))
+        concentration_discount = 0.5 if self._count_strategy_open_positions(positions) >= 1 else 1.0
+        risk_budget = max(equity * self.REGIME_RISK_PER_TRADE * concentration_discount, 0.0)
+        if risk_budget <= 0:
+            return max(1.0, float(self.margin_boks))
+        notional = (risk_budget * entry_price) / stop_distance
+        raw_margin = notional / max(self.leverage, 1e-9)
+        capped_margin = min(raw_margin, float(self.margin_boks))
+        return max(1.0, capped_margin)
+
     def _ensure_ema_state(self, now: int, position: Dict[str, Any], account: Dict[str, Any]) -> Dict[str, Any]:
         position_id = str(position.get("positionId", ""))
         pnl = float(position.get("unrealizedPnl", 0) or 0)
@@ -715,6 +999,182 @@ class BotRunner:
             )
             self._clear_ema_state()
             return
+
+    def _get_closed_4h_candles(self, bars: int = 620) -> List[Dict[str, Any]]:
+        candles = self.hyperliquid.get_candles(self.trade_coin, interval="4h", bars=bars)
+        if len(candles) >= 2:
+            maybe_open = _to_float(candles[-1].get("close_time", 0), 0.0)
+            if maybe_open > int(time.time() * 1000):
+                candles = candles[:-1]
+        return candles
+
+    def _get_regime_market_snapshot(self, now: int, symbol: str, bars: int = 620) -> Dict[str, Any]:
+        cache = self._regime_market_cache.get(symbol)
+        if cache and (now - _to_int(cache.get("fetched_at", 0), 0)) <= 90:
+            return cache
+
+        prev_pair, prev_coin = self.trade_pair, self.trade_coin
+        self.trade_pair = symbol
+        self.trade_coin = self._normalize_coin(symbol)
+        try:
+            candles = self._get_closed_4h_candles(bars=bars)
+            snapshot = compute_regime_switch_snapshot(candles)
+            candle_key = _to_int(snapshot.get("last_candle_open_time", 0), 0)
+            payload = {
+                "fetched_at": now,
+                "candles": candles,
+                "snapshot": snapshot,
+                "candle_key": candle_key,
+            }
+            self._regime_market_cache[symbol] = payload
+            return payload
+        finally:
+            self.trade_pair = prev_pair
+            self.trade_coin = prev_coin
+
+    def _build_regime_open_payload(
+        self,
+        signal: Dict[str, Any],
+        account: Dict[str, Any],
+        positions: List[Dict[str, Any]],
+    ) -> Optional[Dict[str, Any]]:
+        capital = self._account_total_equity(account, positions)
+        entry_price = _to_float(signal.get("close", 0), 0.0)
+        atr_now = _to_float(signal.get("atr14", 0), 0.0)
+        regime = str(signal.get("regime", "NO_TRADE"))
+        if capital <= 0 or entry_price <= 0 or atr_now <= 0:
+            return None
+
+        stop_price = entry_price - (
+            (self.REGIME_TREND_STOP_ATR_MULT if regime == "TREND" else self.REGIME_RANGE_STOP_ATR_MULT) * atr_now
+        )
+        if stop_price <= 0 or stop_price >= entry_price:
+            return None
+
+        margin_to_use = self._build_regime_margin(entry_price, stop_price, capital, positions)
+        if regime == "RANGE":
+            take_profit = _to_float(signal.get("bb_mid", 0), 0.0)
+        else:
+            risk_targets = build_long_sl_tp_prices(
+                entry_price=entry_price,
+                capital=capital,
+                margin=margin_to_use,
+                leverage=self.leverage,
+                sl_capital_pct=self.sl_capital_pct,
+                tp_capital_pct=self.tp_capital_pct,
+            )
+            take_profit = _to_float(risk_targets.get("take_profit", 0.0), 0.0)
+        if take_profit <= 0:
+            return None
+
+        comment = (
+            "Regime TREND breakout on closed 4H candle. Long setup."
+            if regime == "TREND"
+            else "Regime RANGE mean-reversion on closed 4H candle. Long setup."
+        )
+        return {
+            "coin": self._normalize_coin(self.trade_pair),
+            "side": "LONG",
+            "margin": margin_to_use,
+            "leverage": self.leverage,
+            "stopLoss": round(stop_price, 6),
+            "takeProfit": round(take_profit, 6),
+            "comment": comment,
+            "entry_price": entry_price,
+            "atr14": atr_now,
+            "regime": regime,
+            "entry_type": str(signal.get("entry_type", "")),
+        }
+
+    def _manage_regime_strategy_position(
+        self,
+        now: int,
+        account: Dict[str, Any],
+        positions: List[Dict[str, Any]],
+        position: Dict[str, Any],
+    ) -> None:
+        position_id = str(position.get("positionId", "") or "")
+        if not position_id:
+            return
+        try:
+            candles = self._get_closed_4h_candles()
+        except Exception as exc:
+            self._log_structured(now, "ERROR", "regime_manage_market_data_failed", symbol=self.trade_pair, error=str(exc))
+            return
+
+        snapshot = compute_regime_switch_snapshot(candles)
+        if not snapshot.get("ok"):
+            self._log_structured(
+                now,
+                "INFO",
+                "regime_manage_skipped_snapshot",
+                symbol=self.trade_pair,
+                reason=str(snapshot.get("reason", "indicator_unavailable")),
+            )
+            return
+
+        candle_key = _to_int(snapshot.get("last_candle_open_time", 0), 0)
+        state = self._get_regime_state()
+        if _to_int(state.get("last_processed_candle", 0), 0) == candle_key:
+            return
+
+        equity = self._account_total_equity(account, positions)
+        day_key = self._current_day_key(now)
+        if str(state.get("day_key", "")) != day_key:
+            state["day_key"] = day_key
+            state["day_start_equity"] = equity
+            state["trading_blocked_today"] = False
+        day_start_equity = max(_to_float(state.get("day_start_equity", equity), equity), 1e-9)
+        day_drawdown_pct = (equity - day_start_equity) / day_start_equity
+        state["day_drawdown_pct"] = day_drawdown_pct
+        if day_drawdown_pct <= -self.REGIME_MAX_DAILY_DRAWDOWN:
+            state["trading_blocked_today"] = True
+
+        state["last_processed_candle"] = candle_key
+        state["last_regime"] = str(snapshot.get("regime", "NO_TRADE"))
+        state["position_id"] = position_id
+        state.setdefault("entry_price", _to_float(position.get("entryPrice", 0), 0.0))
+        state.setdefault("stop_price", _to_float(position.get("stopLoss", 0), 0.0))
+        state.setdefault("initial_stop_price", _to_float(position.get("stopLoss", 0), 0.0))
+        state.setdefault("take_profit_price", _to_float(position.get("takeProfit", 0), 0.0))
+        state.setdefault("trailing_stop_price", 0.0)
+        state.setdefault("moved_to_be", False)
+        state.setdefault("regime_at_entry", str(snapshot.get("regime", "TREND")))
+
+        action = evaluate_regime_switch_manage_long_4h(
+            candles,
+            state,
+            trend_trail_atr_mult=self.REGIME_TREND_TRAIL_ATR_MULT,
+            trend_move_stop_to_be_atr=self.REGIME_MOVE_STOP_TO_BE_ATR,
+            range_move_sl_to_be_r=self.REGIME_RANGE_MOVE_SL_TO_BE_R,
+        )
+
+        patch = action.get("state_patch")
+        if isinstance(patch, dict) and patch:
+            state.update(patch)
+
+        move_action = str(action.get("action", "HOLD") or "HOLD").upper()
+        if move_action.startswith("EXIT"):
+            reason = str(action.get("reason", "regime_exit") or "regime_exit")
+            comment = f"Regime strategy exit: {reason}."
+            self._close_position(
+                now,
+                position_id,
+                f"Regime strategy close ({reason})",
+                comment=comment,
+                owner="strategy",
+            )
+            state["cooldown_remaining_bars"] = self.REGIME_COOLDOWN_BARS_AFTER_EXIT
+            state["position_id"] = ""
+            state["regime_at_entry"] = ""
+            state["entry_price"] = 0.0
+            state["stop_price"] = 0.0
+            state["initial_stop_price"] = 0.0
+            state["take_profit_price"] = 0.0
+            state["trailing_stop_price"] = 0.0
+            state["moved_to_be"] = False
+
+        self._set_regime_state(state)
 
     def _extract_position_id_from_open_response(self, response: Dict[str, Any]) -> str:
         if not isinstance(response, dict):
@@ -842,10 +1302,19 @@ class BotRunner:
         if not strategy_pos:
             if self.active_strategy == self.STRATEGY_EMA_RSI:
                 self._clear_ema_state()
+            if self.active_strategy == self.STRATEGY_REGIME_SWITCH:
+                state = self._get_regime_state()
+                if state and str(state.get("position_id", "")):
+                    state.pop("position_id", None)
+                    self._set_regime_state(state)
             return
 
         if self.active_strategy == self.STRATEGY_EMA_RSI:
             self._manage_ema_strategy_position(now, account, strategy_pos)
+            return
+
+        if self.active_strategy == self.STRATEGY_REGIME_SWITCH:
+            self._manage_regime_strategy_position(now, account, positions, strategy_pos)
             return
 
         capital = parse_total_capital(account)
@@ -1617,12 +2086,200 @@ class BotRunner:
             result["dry_run"] = True
         return result
 
+    def _collect_regime_candidates(self, now: int, account: Dict[str, Any], positions: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
+        candidates: List[Dict[str, Any]] = []
+        for symbol in self.STRATEGY_TARGET_SYMBOLS:
+            self._set_strategy_context(self.STRATEGY_REGIME_SWITCH, symbol)
+            if self._count_regime_open_longs_for_coin(self.trade_coin, positions) >= self.REGIME_MAX_OPEN_LONGS_PER_SYMBOL:
+                self._inc_regime_metric("symbol_cap_blocked_total", 1)
+                continue
+
+            state = self._get_regime_state()
+            market = self._get_regime_market_snapshot(now, symbol)
+            snapshot = market.get("snapshot", {}) if isinstance(market, dict) else {}
+            candles = market.get("candles", []) if isinstance(market, dict) else []
+            candle_key = _to_int(market.get("candle_key", 0), 0)
+            if not isinstance(snapshot, dict) or not snapshot.get("ok"):
+                continue
+            if _to_int(state.get("last_processed_candle", 0), 0) == candle_key:
+                continue
+
+            equity = self._account_total_equity(account, positions)
+            day_key = self._current_day_key(now)
+            if str(state.get("day_key", "")) != day_key:
+                state["day_key"] = day_key
+                state["day_start_equity"] = equity
+                state["trading_blocked_today"] = False
+            day_start = max(_to_float(state.get("day_start_equity", equity), equity), 1e-9)
+            day_drawdown_pct = (equity - day_start) / day_start
+            state["day_drawdown_pct"] = day_drawdown_pct
+            if day_drawdown_pct <= -self.REGIME_MAX_DAILY_DRAWDOWN:
+                state["trading_blocked_today"] = True
+
+            cooldown = _to_int(state.get("cooldown_remaining_bars", 0), 0)
+            if cooldown > 0:
+                state["cooldown_remaining_bars"] = cooldown - 1
+                state["last_processed_candle"] = candle_key
+                self._set_regime_state(state)
+                continue
+            if bool(state.get("trading_blocked_today", False)):
+                state["last_processed_candle"] = candle_key
+                self._set_regime_state(state)
+                continue
+
+            signal = evaluate_regime_switch_entry_long_4h(candles)
+            add_signal(self.db_path, now, self.trade_coin, "4h", bool(signal.get("signal")), json.dumps(signal))
+            if not signal.get("signal"):
+                state["last_processed_candle"] = _to_int(signal.get("last_candle_open_time", candle_key), candle_key)
+                state["last_regime"] = str(signal.get("regime", snapshot.get("regime", "NO_TRADE")))
+                self._set_regime_state(state)
+                continue
+
+            atr_now = _to_float(signal.get("atr14", 0.0), 0.0)
+            atr_prev = _to_float(signal.get("atr14_prev", atr_now), atr_now)
+            if atr_prev > 0 and atr_now >= (atr_prev * self.REGIME_VOLATILITY_SHOCK_MULT):
+                self._inc_regime_metric("volatility_shock_skipped_total", 1)
+                state["cooldown_remaining_bars"] = max(_to_int(state.get("cooldown_remaining_bars", 0), 0), 1)
+                state["last_processed_candle"] = _to_int(signal.get("last_candle_open_time", candle_key), candle_key)
+                state["last_regime"] = str(signal.get("regime", snapshot.get("regime", "NO_TRADE")))
+                self._set_regime_state(state)
+                self._log_structured(
+                    now,
+                    "WARN",
+                    "regime_entry_skipped_volatility_shock",
+                    symbol=symbol,
+                    atr_now=atr_now,
+                    atr_prev=atr_prev,
+                    mult=self.REGIME_VOLATILITY_SHOCK_MULT,
+                )
+                continue
+
+            signal["_score"] = self._score_regime_candidate(signal)
+            signal["_symbol"] = symbol
+            self._inc_regime_metric("candidates_total", 1)
+            candidates.append(signal)
+        return candidates
+
+    def _open_regime_candidate(self, now: int, candidate: Dict[str, Any], account: Dict[str, Any], positions: List[Dict[str, Any]]) -> bool:
+        symbol = str(candidate.get("_symbol", self.trade_pair) or self.trade_pair)
+        self._set_strategy_context(self.STRATEGY_REGIME_SWITCH, symbol)
+        signal_key = self._regime_entry_key()
+        candle_key = str(int(_to_float(candidate.get("last_candle_open_time", 0), 0.0)))
+        if get_kv(self.db_path, signal_key, "") == candle_key:
+            return False
+
+        payload = self._build_regime_open_payload(candidate, account, positions)
+        if not payload:
+            return False
+
+        if self.dry_run:
+            add_trade(
+                self.db_path,
+                now,
+                "OPEN",
+                self.trade_coin,
+                "LONG",
+                _to_float(payload.get("margin", self.margin_boks), self.margin_boks),
+                self.leverage,
+                "DRY_RUN",
+                json.dumps(payload),
+            )
+            set_kv(self.db_path, signal_key, candle_key)
+            state = self._get_regime_state()
+            state.update(
+                {
+                    "position_id": "",
+                    "entry_price": _to_float(payload.get("entry_price", 0), 0.0),
+                    "stop_price": _to_float(payload.get("stopLoss", 0), 0.0),
+                    "initial_stop_price": _to_float(payload.get("stopLoss", 0), 0.0),
+                    "take_profit_price": _to_float(payload.get("takeProfit", 0), 0.0),
+                    "trailing_stop_price": max(
+                        _to_float(payload.get("entry_price", 0), 0.0) - (self.REGIME_TREND_TRAIL_ATR_MULT * _to_float(payload.get("atr14", 0), 0.0)),
+                        0.0,
+                    ),
+                    "moved_to_be": False,
+                    "regime_at_entry": str(payload.get("regime", "NO_TRADE")),
+                    "last_regime": str(payload.get("regime", "NO_TRADE")),
+                    "last_processed_candle": _to_int(candidate.get("last_candle_open_time", 0), 0),
+                    "last_entry_type": str(payload.get("entry_type", "")),
+                }
+            )
+            self._set_regime_state(state)
+            return True
+
+        if not self._can_send_trade(now):
+            return False
+
+        response = self.client.open_trade(
+            {
+                "coin": payload["coin"],
+                "side": payload["side"],
+                "margin": payload["margin"],
+                "leverage": payload["leverage"],
+                "stopLoss": payload["stopLoss"],
+                "takeProfit": payload["takeProfit"],
+                "comment": payload["comment"],
+            }
+        )
+        add_trade(
+            self.db_path,
+            now,
+            "OPEN",
+            self.trade_coin,
+            "LONG",
+            _to_float(payload.get("margin", self.margin_boks), self.margin_boks),
+            self.leverage,
+            "OK",
+            json.dumps(response),
+        )
+        self._capture_owner_position_id("strategy", now, positions, response)
+        set_kv(self.db_path, signal_key, candle_key)
+        state = self._get_regime_state()
+        strategy_position_id = self._get_owner_position_id("strategy")
+        state.update(
+            {
+                "position_id": strategy_position_id,
+                "entry_price": _to_float(payload.get("entry_price", 0), 0.0),
+                "stop_price": _to_float(payload.get("stopLoss", 0), 0.0),
+                "initial_stop_price": _to_float(payload.get("stopLoss", 0), 0.0),
+                "take_profit_price": _to_float(payload.get("takeProfit", 0), 0.0),
+                "trailing_stop_price": max(
+                    _to_float(payload.get("entry_price", 0), 0.0) - (self.REGIME_TREND_TRAIL_ATR_MULT * _to_float(payload.get("atr14", 0), 0.0)),
+                    0.0,
+                ),
+                "moved_to_be": False,
+                "regime_at_entry": str(payload.get("regime", "NO_TRADE")),
+                "last_regime": str(payload.get("regime", "NO_TRADE")),
+                "last_processed_candle": _to_int(candidate.get("last_candle_open_time", 0), 0),
+                "last_entry_type": str(payload.get("entry_type", "")),
+            }
+        )
+        self._set_regime_state(state)
+        self._log_structured(
+            now,
+            "INFO",
+            "regime_open_submitted",
+            symbol=symbol,
+            side="LONG",
+            margin=_to_float(payload.get("margin", 0), 0.0),
+            score=_to_float(candidate.get("_score", 0), 0.0),
+            position_id=strategy_position_id,
+        )
+        return True
+
     def _maybe_open_long(self, now: int, account: Dict[str, Any], positions: List[Dict[str, Any]]) -> None:
         if self._owner_has_open_position("strategy", positions):
             self._log_structured(now, "INFO", "strategy_entry_skipped_position_exists", symbol=self.trade_pair)
             return
         if self.active_strategy == self.STRATEGY_EMA_RSI and self._has_any_open_long_on_coin(positions, self.trade_coin):
             self._log_structured(now, "INFO", "strategy_entry_skipped_long_exists", symbol=self.trade_pair, strategy=self.active_strategy)
+            return
+        if self.active_strategy == self.STRATEGY_REGIME_SWITCH and self._has_any_open_long_on_coin(positions, self.trade_coin):
+            self._log_structured(now, "INFO", "strategy_entry_skipped_long_exists", symbol=self.trade_pair, strategy=self.active_strategy)
+            return
+        if self.active_strategy == self.STRATEGY_REGIME_SWITCH and self._available_regime_slots(positions) <= 0:
+            self._inc_regime_metric("cap_blocked_total", 1)
+            self._log_structured(now, "INFO", "regime_entry_skipped_total_cap", cap=self.REGIME_MAX_OPEN_LONGS_TOTAL)
             return
         if len(positions) >= self.max_positions:
             self._log_structured(now, "WARN", "strategy_entry_skipped_max_positions", max_positions=self.max_positions)
@@ -1631,6 +2288,8 @@ class BotRunner:
         signal = {}
         signal_timeframe = "4h"
         signal_key = "last_entry_candle"
+        regime_state: Dict[str, Any] = {}
+        regime_entry_type = ""
         try:
             if self.active_strategy == self.STRATEGY_EMA_RSI:
                 candles = self.hyperliquid.get_candles(self.trade_coin, interval="15m", bars=300)
@@ -1641,6 +2300,57 @@ class BotRunner:
                 signal = evaluate_long_ema_rsi_15m(candles)
                 signal_timeframe = "15m"
                 signal_key = "last_entry_candle_ema_rsi"
+            elif self.active_strategy == self.STRATEGY_REGIME_SWITCH:
+                candles = self._get_closed_4h_candles()
+                signal = evaluate_regime_switch_entry_long_4h(candles)
+                signal_timeframe = "4h"
+                signal_key = self._regime_entry_key()
+
+                regime_state = self._get_regime_state()
+                candle_key_now = _to_int(signal.get("last_candle_open_time", 0), 0)
+                if _to_int(regime_state.get("last_processed_candle", 0), 0) == candle_key_now:
+                    return
+
+                equity = self._account_total_equity(account, positions)
+                day_key = self._current_day_key(now)
+                if str(regime_state.get("day_key", "")) != day_key:
+                    regime_state["day_key"] = day_key
+                    regime_state["day_start_equity"] = equity
+                    regime_state["trading_blocked_today"] = False
+                day_start = max(_to_float(regime_state.get("day_start_equity", equity), equity), 1e-9)
+                day_drawdown_pct = (equity - day_start) / day_start
+                regime_state["day_drawdown_pct"] = day_drawdown_pct
+                if day_drawdown_pct <= -self.REGIME_MAX_DAILY_DRAWDOWN:
+                    regime_state["trading_blocked_today"] = True
+
+                cooldown = _to_int(regime_state.get("cooldown_remaining_bars", 0), 0)
+                if cooldown > 0:
+                    regime_state["cooldown_remaining_bars"] = cooldown - 1
+                    regime_state["last_processed_candle"] = candle_key_now
+                    self._set_regime_state(regime_state)
+                    self._log_structured(
+                        now,
+                        "INFO",
+                        "regime_entry_skipped_cooldown",
+                        strategy=self.active_strategy,
+                        symbol=self.trade_pair,
+                        cooldown_remaining=regime_state["cooldown_remaining_bars"],
+                    )
+                    return
+
+                if bool(regime_state.get("trading_blocked_today", False)):
+                    regime_state["last_processed_candle"] = candle_key_now
+                    self._set_regime_state(regime_state)
+                    self._log_structured(
+                        now,
+                        "WARN",
+                        "regime_entry_blocked_daily_drawdown",
+                        strategy=self.active_strategy,
+                        symbol=self.trade_pair,
+                        day_drawdown_pct=day_drawdown_pct,
+                    )
+                    return
+                regime_entry_type = str(signal.get("entry_type", "") or "")
             else:
                 candles = self.hyperliquid.get_candles(self.trade_coin, interval="4h", bars=90)
                 signal = evaluate_long_ma50_cross_3_candles(candles)
@@ -1654,6 +2364,10 @@ class BotRunner:
         set_kv(self.db_path, "last_signal", json.dumps(signal))
 
         if not signal.get("signal"):
+            if self.active_strategy == self.STRATEGY_REGIME_SWITCH and regime_state:
+                regime_state["last_processed_candle"] = _to_int(signal.get("last_candle_open_time", 0), 0)
+                regime_state["last_regime"] = str(signal.get("regime", "NO_TRADE"))
+                self._set_regime_state(regime_state)
             self._log_structured(
                 now,
                 "INFO",
@@ -1690,11 +2404,46 @@ class BotRunner:
         comment = "MA50(4H) cross-up confirmed by 3 closes. Long setup."
         if self.active_strategy == self.STRATEGY_EMA_RSI:
             comment = "EMA20>EMA50 with RSI 50-70 on closed 15m candle. Long setup."
+        margin_to_use = self.margin_boks
+        if self.active_strategy == self.STRATEGY_REGIME_SWITCH:
+            regime = str(signal.get("regime", "NO_TRADE"))
+            atr_now = _to_float(signal.get("atr14", 0), 0.0)
+            if regime == "TREND":
+                stop_price = entry_price - (self.REGIME_TREND_STOP_ATR_MULT * atr_now)
+            else:
+                stop_price = entry_price - (self.REGIME_RANGE_STOP_ATR_MULT * atr_now)
+            stop_price = max(stop_price, 0.0)
+            if stop_price <= 0 or stop_price >= entry_price:
+                self._log_structured(
+                    now,
+                    "WARN",
+                    "regime_entry_skipped_invalid_stop",
+                    strategy=self.active_strategy,
+                    symbol=self.trade_pair,
+                    stop_price=stop_price,
+                    entry_price=entry_price,
+                )
+                return
+            margin_to_use = self._build_regime_margin(entry_price, stop_price, capital, positions)
+            if regime == "RANGE":
+                take_profit = _to_float(signal.get("bb_mid", 0), 0.0)
+            else:
+                take_profit = risk_targets["take_profit"]
+            risk_targets = {
+                **risk_targets,
+                "stop_loss": stop_price,
+                "take_profit": max(take_profit, 0.0),
+            }
+            comment = (
+                "Regime TREND breakout on closed 4H candle. Long setup."
+                if regime == "TREND"
+                else "Regime RANGE mean-reversion on closed 4H candle. Long setup."
+            )
 
         payload = {
             "coin": self.trade_coin,
             "side": "LONG",
-            "margin": self.margin_boks,
+            "margin": margin_to_use,
             "leverage": self.leverage,
             "stopLoss": round(risk_targets["stop_loss"], 6),
             "takeProfit": round(risk_targets["take_profit"], 6),
@@ -1709,12 +2458,30 @@ class BotRunner:
                 "OPEN",
                 self.trade_coin,
                 "LONG",
-                self.margin_boks,
+                margin_to_use,
                 self.leverage,
                 "DRY_RUN",
                 json.dumps(payload),
             )
             set_kv(self.db_path, signal_key, candle_key)
+            if self.active_strategy == self.STRATEGY_REGIME_SWITCH:
+                regime = str(signal.get("regime", "NO_TRADE"))
+                regime_state = regime_state or self._get_regime_state()
+                regime_state.update(
+                    {
+                        "position_id": "",
+                        "entry_price": entry_price,
+                        "stop_price": payload["stopLoss"],
+                        "initial_stop_price": payload["stopLoss"],
+                        "take_profit_price": payload["takeProfit"],
+                        "trailing_stop_price": max(entry_price - (self.REGIME_TREND_TRAIL_ATR_MULT * _to_float(signal.get("atr14", 0), 0.0)), 0.0),
+                        "moved_to_be": False,
+                        "regime_at_entry": regime,
+                        "last_regime": regime,
+                        "last_processed_candle": _to_int(signal.get("last_candle_open_time", 0), 0),
+                    }
+                )
+                self._set_regime_state(regime_state)
             return
 
         if not self._can_send_trade(now):
@@ -1729,7 +2496,7 @@ class BotRunner:
                 "OPEN",
                 self.trade_coin,
                 "LONG",
-                self.margin_boks,
+                margin_to_use,
                 self.leverage,
                 "OK",
                 json.dumps(response),
@@ -1741,6 +2508,30 @@ class BotRunner:
                 strategy_position = self._find_position_by_id(latest_positions, strategy_position_id)
                 if strategy_position:
                     self._ensure_ema_state(now, strategy_position, account)
+            if self.active_strategy == self.STRATEGY_REGIME_SWITCH:
+                latest_positions = self._fetch_positions(now)
+                strategy_position_id = self._get_owner_position_id("strategy")
+                strategy_position = self._find_position_by_id(latest_positions, strategy_position_id)
+                regime = str(signal.get("regime", "NO_TRADE"))
+                regime_state = regime_state or self._get_regime_state()
+                regime_state.update(
+                    {
+                        "position_id": strategy_position_id,
+                        "entry_price": entry_price,
+                        "stop_price": payload["stopLoss"],
+                        "initial_stop_price": payload["stopLoss"],
+                        "take_profit_price": payload["takeProfit"],
+                        "trailing_stop_price": max(entry_price - (self.REGIME_TREND_TRAIL_ATR_MULT * _to_float(signal.get("atr14", 0), 0.0)), 0.0),
+                        "moved_to_be": False,
+                        "regime_at_entry": regime,
+                        "last_regime": regime,
+                        "last_processed_candle": _to_int(signal.get("last_candle_open_time", 0), 0),
+                        "last_entry_type": regime_entry_type,
+                    }
+                )
+                if strategy_position:
+                    regime_state["position_id"] = str(strategy_position.get("positionId", "") or strategy_position_id)
+                self._set_regime_state(regime_state)
             set_kv(self.db_path, signal_key, candle_key)
             position_id = str(response.get("positionId", "") or "")
             self._log_structured(
@@ -1750,6 +2541,7 @@ class BotRunner:
                 symbol=self.trade_pair,
                 side="LONG",
                 position_id=position_id,
+                margin=margin_to_use,
             )
         except MTCClientError as exc:
             add_trade(

@@ -87,3 +87,19 @@ def test_overlay_rejects_symbol_outside_top10(monkeypatch):
 
     assert result["enabled"] is False
     assert "top 10" in result["message"].lower()
+
+
+def test_overlay_returns_regime_data_for_regime_strategy(monkeypatch):
+    monkeypatch.setattr(app_main.runner, "get_active_strategy", lambda: app_main.runner.STRATEGY_REGIME_SWITCH)
+    monkeypatch.setattr(app_main.aster, "get_usdt_symbols_ranked", lambda pinned_symbols=None: _mock_top_symbols())
+    monkeypatch.setattr(app_main.runner.hyperliquid, "get_candles", lambda coin, interval, bars: _mock_candles(260))
+    monkeypatch.setattr(app_main, "get_all_kv", lambda db_path: {})
+    monkeypatch.setattr(app_main.runner, "classify_open_positions", lambda positions: {"strategy_position": None})
+
+    result = app_main.strategy_overlay(symbol="ETHUSDT", interval="4h", limit=260)
+
+    assert result["enabled"] is True
+    assert result["strategy"] == app_main.runner.STRATEGY_REGIME_SWITCH
+    assert result["required_interval"] == "4h"
+    assert len(result["ema_fast"]) > 0
+    assert "regime_snapshot" in result

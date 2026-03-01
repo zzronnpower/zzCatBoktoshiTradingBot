@@ -17,4 +17,9 @@ def test_system_metrics_contains_expected_sections(tmp_path, monkeypatch):
     assert 'journal_sync' in metrics
     assert 'remote_history' in metrics
     assert 'pending_finalize_count' in metrics
+    assert 'regime_tuning' in metrics
     assert '/api/test-metric' in metrics['requests']
+    regime = metrics['regime_tuning']
+    assert 'cap_blocked_total' in regime
+    assert 'candidates_total' in regime
+    assert 'open_rate' in regime

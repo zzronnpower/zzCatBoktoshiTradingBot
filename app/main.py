@@ -15,12 +15,17 @@ from starlette.requests import Request
 from .aster_client import AsterClient
 from .bot_runner import BotRunner
 from BoktoshiBotModule.strategy import (
+    build_bollinger_series,
     build_ema_series,
     build_ma50_series,
+    compute_regime_switch_snapshot,
     detect_ema_rsi_long_markers,
     detect_ma50_crossup_markers,
+    detect_regime_markers,
+    detect_regime_switch_long_markers,
 )
 from AsterTradingModule import AsterManualTradingService, AsterTradingConfig
+from .schemas import CloseRecord, IntegrityReport, MetricsPayload
 from .services.journal_app_service import JournalAppService
 from .storage import (
     count_journal_entries,
@@ -284,8 +289,8 @@ def _looks_closed_trade(record: Dict[str, Any]) -> bool:
     return False
 
 
-def _normalize_remote_closed_trades(items: List[Dict[str, Any]]) -> List[Dict[str, Any]]:
-    out: List[Dict[str, Any]] = []
+def _normalize_remote_closed_trades(items: List[Dict[str, Any]]) -> List[CloseRecord]:
+    out: List[CloseRecord] = []
     seen: set[str] = set()
     for raw in items:
         if not isinstance(raw, dict):
@@ -492,7 +497,7 @@ def _pop_open_context_match(
     return {}
 
 
-def _build_fallback_closed_trades() -> List[Dict[str, Any]]:
+def _build_fallback_closed_trades() -> List[CloseRecord]:
     fallback: List[Dict[str, Any]] = []
     open_context = _extract_local_open_context()
     closes = [row for row in get_trades(DB_PATH, limit=2000) if str(row.get("action", "")).upper() == "CLOSE"]
@@ -667,7 +672,7 @@ def _build_fallback_closed_trades() -> List[Dict[str, Any]]:
     return fallback
 
 
-def _build_closed_trade_snapshot(fetch_live_history: bool = True) -> List[Dict[str, Any]]:
+def _build_closed_trade_snapshot(fetch_live_history: bool = True) -> List[CloseRecord]:
     kv = get_all_kv(DB_PATH)
     remote = _parse_json(kv.get("last_history", "[]"))
     remote_items = remote if isinstance(remote, list) else []
@@ -1014,20 +1019,26 @@ def _decorate_journal_row(row: Dict[str, Any], price_hints: Optional[Dict[str, f
     out["display_exit_price"] = exit_price if exit_price is not None else estimated_exit
     out["display_realized_pnl"] = realized if realized is not None else estimated_realized
     out["pending"] = 1 if (out.get("recovered") != 1 and out.get("realized_pnl") in (None, "")) else 0
-    if realized is not None:
-        out["finalization_state"] = "FINALIZED"
-        out["estimated_source"] = "none"
-    elif estimated_realized is not None:
-        out["finalization_state"] = "ESTIMATED"
-        if isinstance(close_snapshot, dict) and _first_float_optional(close_snapshot, ["realizedPnl", "unrealizedPnl", "pnl"]) is not None:
-            out["estimated_source"] = "snapshot"
-        elif estimated_exit is not None and estimated_exit == _first_float_optional(out, ["display_exit_price"]):
-            out["estimated_source"] = "market_hint"
-        else:
-            out["estimated_source"] = "formula"
+    persisted_state = str(out.get("finalization_state", "") or "").upper().strip()
+    persisted_source = str(out.get("estimated_source", "") or "").lower().strip()
+    if persisted_state in {"PENDING", "ESTIMATED", "FINALIZED"}:
+        out["finalization_state"] = persisted_state
+        out["estimated_source"] = persisted_source if persisted_source else "none"
     else:
-        out["finalization_state"] = "PENDING"
-        out["estimated_source"] = "none"
+        if realized is not None:
+            out["finalization_state"] = "FINALIZED"
+            out["estimated_source"] = "none"
+        elif estimated_realized is not None:
+            out["finalization_state"] = "ESTIMATED"
+            if isinstance(close_snapshot, dict) and _first_float_optional(close_snapshot, ["realizedPnl", "unrealizedPnl", "pnl"]) is not None:
+                out["estimated_source"] = "snapshot"
+            elif estimated_exit is not None and estimated_exit == _first_float_optional(out, ["display_exit_price"]):
+                out["estimated_source"] = "market_hint"
+            else:
+                out["estimated_source"] = "formula"
+        else:
+            out["finalization_state"] = "PENDING"
+            out["estimated_source"] = "none"
     return out
 
 
@@ -1072,7 +1083,7 @@ def _summarize_journal_rows(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     }
 
 
-def _journal_integrity_report(rows: List[Dict[str, Any]], now: Optional[int] = None) -> Dict[str, Any]:
+def _journal_integrity_report(rows: List[Dict[str, Any]], now: Optional[int] = None) -> IntegrityReport:
     ts_now = int(now or time.time())
     by_external: Dict[str, int] = {}
     stale_pending: List[Dict[str, Any]] = []
@@ -1133,6 +1144,7 @@ BOT_NAME = os.getenv("BOT_NAME", "zzCatBoktoshiTradingBot")
 BOT_DESC = os.getenv("BOT_DESC", "ETHUSDT MA50(4H) long-only bot")
 POLL_SECONDS = int(os.getenv("POLL_SECONDS", "20"))
 DRY_RUN = _env_bool(os.getenv("DRY_RUN", "true"), True)
+STRATEGY_AUTO_START = _env_bool(os.getenv("STRATEGY_AUTO_START", "false"), False)
 
 TRADE_COIN = "ETHUSDT"
 MARGIN_BOKS = float(os.getenv("MARGIN_BOKS", "100"))
@@ -1189,6 +1201,7 @@ runner = BotRunner(
     sl_capital_pct=SL_CAPITAL_PCT,
     tp_capital_pct=TP_CAPITAL_PCT,
     max_positions=MAX_POSITIONS,
+    strategy_auto_start=STRATEGY_AUTO_START,
 )
 
 journal_service = JournalAppService(
@@ -1226,6 +1239,11 @@ def strategy_summary_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("strategy_summary.html", {"request": request})
 
 
+@app.get("/fredtrade-migration-report", response_class=HTMLResponse)
+def fredtrade_migration_report_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("fredtrade_migration_report.html", {"request": request})
+
+
 @app.get("/chatlog", response_class=HTMLResponse)
 def chatlog_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("chatlog.html", {"request": request})
@@ -1255,6 +1273,7 @@ def status() -> Dict[str, Any]:
     strategy_map = {item["id"]: item for item in runner.list_strategies()}
     strategy_info = strategy_map.get(active_strategy, strategy_map.get(runner.STRATEGY_MA50, {}))
     is_ema = active_strategy == runner.STRATEGY_EMA_RSI
+    is_regime = active_strategy == runner.STRATEGY_REGIME_SWITCH
     ema_runtime_raw = _parse_json(kv.get(runner.EMA_STATE_KEY, ""))
     ema_runtime = None
     if isinstance(ema_runtime_raw, dict):
@@ -1285,10 +1304,11 @@ def status() -> Dict[str, Any]:
             "leverage": runtime_settings["leverage"],
             "sl_capital_pct": runtime_settings["sl_capital_pct"],
             "tp_capital_pct": runtime_settings["tp_capital_pct"],
-            "risk_mode": "R_MULTIPLE_TRAILING" if is_ema else "CAPITAL_PCT_FIXED",
+            "risk_mode": "REGIME_SWITCH_RISK" if is_regime else ("R_MULTIPLE_TRAILING" if is_ema else "CAPITAL_PCT_FIXED"),
             "tp_r_multiple": 2 if is_ema else None,
             "trailing_activation_r": 1 if is_ema else None,
             "ema_runtime": ema_runtime if is_ema else None,
+            "regime_runtime": runner.get_regime_runtime() if is_regime else None,
         },
         "last_signal": _parse_json(kv.get("last_signal", "")),
     }
@@ -1383,7 +1403,7 @@ def system_integrity_report() -> Dict[str, Any]:
 
 
 @app.get("/api/system/metrics")
-def system_metrics() -> Dict[str, Any]:
+def system_metrics() -> Dict[str, MetricsPayload]:
     with _METRICS_LOCK:
         requests_metrics = dict(_APP_METRICS.get("requests", {}))
         journal_sync = dict(_APP_METRICS.get("journal_sync", {}))
@@ -1395,6 +1415,7 @@ def system_metrics() -> Dict[str, Any]:
             "journal_sync": journal_sync,
             "remote_history": remote_history,
             "pending_finalize_count": len(queue),
+            "regime_tuning": runner.get_regime_tuning_metrics(),
         }
     }
 
@@ -1642,13 +1663,28 @@ def strategy_overlay(symbol: str = "ETHUSDT", interval: str = "4h", limit: int =
     ma50 = []
     ema_fast = []
     ema_slow = []
+    bb_upper = []
+    bb_mid = []
+    bb_lower = []
     entry_markers = []
+    regime_markers = []
+    regime_snapshot: Dict[str, Any] = {}
     message = ""
     if active_strategy == runner.STRATEGY_EMA_RSI:
         ema_fast = build_ema_series(candles, 20)
         ema_slow = build_ema_series(candles, 50)
         entry_markers = detect_ema_rsi_long_markers(candles)
         message = "EMA20/EMA50 and EMA-RSI entry markers are computed from Hyperliquid candles."
+    elif active_strategy == runner.STRATEGY_REGIME_SWITCH:
+        ema_fast = build_ema_series(candles, 200)
+        bb = build_bollinger_series(candles, period=20, std_mult=2.0)
+        bb_upper = bb.get("upper", []) if isinstance(bb, dict) else []
+        bb_mid = bb.get("mid", []) if isinstance(bb, dict) else []
+        bb_lower = bb.get("lower", []) if isinstance(bb, dict) else []
+        entry_markers = detect_regime_switch_long_markers(candles)
+        regime_markers = detect_regime_markers(candles)
+        regime_snapshot = compute_regime_switch_snapshot(candles)
+        message = "EMA200 + Bollinger bands + regime/entry markers are computed from closed 4H Hyperliquid candles."
     else:
         ma50 = build_ma50_series(candles)
         entry_markers = detect_ma50_crossup_markers(candles)
@@ -1693,7 +1729,12 @@ def strategy_overlay(symbol: str = "ETHUSDT", interval: str = "4h", limit: int =
         "ma50": ma50,
         "ema_fast": ema_fast,
         "ema_slow": ema_slow,
+        "bb_upper": bb_upper,
+        "bb_mid": bb_mid,
+        "bb_lower": bb_lower,
         "entry_markers": entry_markers,
+        "regime_markers": regime_markers,
+        "regime_snapshot": regime_snapshot if isinstance(regime_snapshot, dict) else {},
         "position": position_overlay,
     }
 

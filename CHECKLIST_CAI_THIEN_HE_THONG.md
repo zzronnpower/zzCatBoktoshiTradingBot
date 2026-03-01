@@ -133,3 +133,7 @@
   - Phase C: bo sung truong suy dien `finalization_state` va `estimated_source` tren journal rows.
   - Phase D: bo sung CI workflow `pytest` tren GitHub Actions.
   - Phase E: bo sung script benchmark/target check `scripts/perf_targets_check.py` va verify dat target hien tai.
+- 2026-03-01: Chot roadmap con lai:
+  - Phase C hoan tat theo huong persisted: bo sung cot DB `finalization_state` + `estimated_source`, auto migration khi startup, va script `scripts/migrate_journal_finalization_fields.py`.
+  - Phase D hoan tat test API/concurrency: them test cho `/api/journal/refresh`, `/api/system/integrity-report`, va lock behavior cua journal sync.
+  - Dong trang thai roadmap: `NEXT_ROADMAP.md` cap nhat thanh COMPLETED.

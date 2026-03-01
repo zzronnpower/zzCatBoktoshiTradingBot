@@ -13,9 +13,10 @@
         <p>Theo dõi nhanh mô tả strategy đang chạy và các thông tin vận hành theo thời gian thực.</p>
         <div class="nav-links">
           <a href="/">Dashboard</a>
-          <a href="/journal">Boktoshi Trading Journal</a>
           <a href="/manual" class="nav-position-management">Position Management</a>
+          <a href="/journal">Boktoshi Trading Journal</a>
           <a href="/strategy-summary" class="active">Tóm tắt Strategy</a>
+          <a href="/fredtrade-migration-report">FredTradeMigration Report</a>
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
           <a href="/chatlog">ChatLog</a>
@@ -59,6 +60,7 @@
 
       const STRATEGY_MA50 = 'MA50_4H_CROSSUP_3C_LONG_ONLY';
       const STRATEGY_EMA = 'EMA_RSI_15M_ETH_ONLY';
+      const STRATEGY_REGIME = '4H_REGIME_SWITCH_V1';
 
       function setMetaRows(rows) {
         const defaults = [
@@ -137,6 +139,29 @@
           return;
         }
 
+        if (activeId === STRATEGY_REGIME) {
+          const regimeRuntime = strategy.regime_runtime || null;
+          if (titleEl) titleEl.textContent = 'Strategy Name: 4H Regime Switch V1 (BTC/ETH/SOL)';
+          if (subtitleEl) {
+            subtitleEl.textContent = 'Chiến lược 4H closed-candle nhận diện TREND/RANGE, vào lệnh LONG theo breakout hoặc mean-reversion.';
+          }
+          setMetaRows([
+            { label: 'Khung thời gian', value: '4H (closed candle only)' },
+            { label: 'Regime hiện tại', value: regimeRuntime ? (regimeRuntime.last_regime || 'NO_TRADE') : 'Chưa có trạng thái' },
+            { label: 'Cooldown / Day lock', value: regimeRuntime ? `${Number(regimeRuntime.cooldown_remaining_bars || 0)} bars | ${regimeRuntime.trading_blocked_today ? 'BLOCKED' : 'ACTIVE'}` : '-' },
+          ]);
+          summaryEl.innerHTML = [
+            '<b>Tín hiệu vào lệnh TREND:</b> chỉ LONG khi regime=TREND và close nến 4H vượt Donchian high 20 nến.',
+            '<b>Tín hiệu vào lệnh RANGE:</b> chỉ LONG khi close chạm/đè BB lower và RSI(14) &lt; 30.',
+            '<b>Không repaint:</b> toàn bộ điều kiện chỉ đọc nến 4H đã đóng.',
+            '<b>Risk model:</b> sizing theo 1% equity/trade (quy đổi về margin+leverage), có giảm size khi concentration tăng.',
+            '<b>Thoát lệnh TREND:</b> Donchian low 10, ATR trailing stop, và move stop về BE khi đạt +1 ATR.',
+            '<b>Thoát lệnh RANGE:</b> TP về BB mid, SL ATR, move SL về BE khi đạt 1R.',
+            '<b>Guard bổ sung:</b> cooldown 3 nến sau exit và khóa vào lệnh mới khi drawdown ngày vượt ngưỡng.'
+          ].map((line) => `<div class="summary-line">${line}</div>`).join('');
+          return;
+        }
+
         if (titleEl) titleEl.textContent = `Strategy Name: ${strategy?.name || 'Không xác định'}`;
         if (subtitleEl) subtitleEl.textContent = 'Chưa có nội dung tóm tắt cho strategy này.';
         setMetaRows();
@@ -154,7 +179,7 @@
       }
 
       refreshSummary();
-      setInterval(refreshSummary, 5000);
+      setInterval(refreshSummary, 20000);
     </script>
     <script src="/static/theme.js"></script>
   </body>

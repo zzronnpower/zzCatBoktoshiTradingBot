@@ -40,3 +40,5 @@ def test_replace_journal_entries_deduplicates_and_prunes(tmp_path):
     row_a = next(r for r in rows2 if r["external_id"] == "a")
     assert row_a["close_ts"] == 300
     assert row_a["realized_pnl"] == 3.5
+    assert row_a["finalization_state"] == "FINALIZED"
+    assert row_a["estimated_source"] == "none"

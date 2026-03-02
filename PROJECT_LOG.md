@@ -1,6 +1,6 @@
 # PROJECT_LOG
 
-Last updated: 2026-02-25 (4H_REGIME_SWITCH_V1 integration assessment logged)
+Last updated: 2026-03-02 (manual same-symbol stacking + per-order overrides)
 Project: `zzCatBoktoshiTradingBot`
 
 ## 1) Project Intent
@@ -1456,3 +1456,51 @@ When a new assistant session starts:
   - `docker compose ... up -d` keeps service running.
   - `GET /api/status` returns `200`.
   - container logs show successful startup and normal API traffic after reload.
+
+## 69) Chatlog Vietnamese diacritics normalization (2026-03-01)
+
+- User feedback: recent entries in `chatlog` were written in Vietnamese without diacritics.
+- Updated `app/templates/chatlog.html` to normalize all newly added no-diacritic sections into proper Vietnamese with diacritics.
+- Scope:
+  - corrected both user and assistant messages in recent strategy/roadmap/incident blocks.
+  - preserved original technical meaning and HTML structure.
+- Result:
+  - `chatlog` now displays Vietnamese text with proper accents consistently for recent entries.
+
+## 70) Manual position limit increased to 5 (2026-03-02)
+
+- Updated manual runtime guard in `BoktoshiBotModule/bot_runner.py`:
+  - `MANUAL_MAX_POSITIONS` changed from `3` to `5`.
+  - Manual force-open flow now allows up to 5 concurrent manual-owned positions before returning limit guard.
+- Updated local agent project constraints in `AGENTS.md` to match runtime behavior:
+  - manual ownership policy now states up to 5 manual-owned positions.
+- Added regression test in `tests/test_bot_runner_flows.py`:
+  - `test_manual_force_open_rejects_when_reaching_manual_limit_five`
+  - verifies manual open is rejected with `limit reached (5)` once five manual IDs are present.
+
+## 71) Manual stacking per symbol + per-order risk overrides (2026-03-02)
+
+- Manual-only behavior update for same pair handling:
+  - `BoktoshiBotModule/bot_runner.py`
+    - removed manual guard that blocked opening another position on the same symbol/side.
+    - kept hedge guard unchanged: opposite side on same symbol is still rejected.
+  - Result: manual flow can now open multiple independent positions on the same pair (same side), each tracked by its own `positionId`.
+
+- Per-order manual settings support added (without changing global Bot Settings):
+  - `BoktoshiBotModule/bot_runner.py`
+    - added `_resolve_manual_open_settings(...)` to parse safe overrides for:
+      - `margin_boks`
+      - `leverage`
+      - `sl_percent` / `sl_capital_pct`
+      - `tp_percent` / `tp_capital_pct`
+    - `manual_force_open[_long|_short]` now accepts `manual_settings` and applies those values only to that order.
+  - `app/main.py`
+    - `/api/manual/force-open-long` and `/api/manual/force-open-short` now accept optional payload overrides (`margin_boks`, `leverage`, `sl_percent`, `tp_percent`) and forward them to runner.
+  - `app/templates/manual.html`
+    - Manual Trade Panel now includes optional per-order inputs for margin/leverage/SL/TP.
+    - if left empty, request uses current global Bot Settings.
+
+- Regression/behavior tests updated in `tests/test_bot_runner_flows.py`:
+  - `test_manual_force_open_long_rejects_if_manual_short_same_symbol_exists` now asserts hedge-disabled message.
+  - added `test_manual_force_open_long_allows_multiple_same_symbol_same_side`.
+  - added `test_manual_force_open_uses_per_order_settings_override`.

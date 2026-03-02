@@ -1521,18 +1521,32 @@ def run_all_strategies() -> Dict[str, Any]:
 @app.post("/api/manual/force-open-long")
 def manual_force_open_long(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:  # type: ignore[valid-type]
     symbol = str(payload.get("symbol", "ETHUSDT") or "ETHUSDT").upper()
+    manual_settings = {
+        "margin_boks": payload.get("margin_boks"),
+        "leverage": payload.get("leverage"),
+        "sl_percent": payload.get("sl_percent"),
+        "tp_percent": payload.get("tp_percent"),
+    }
     return runner.manual_force_open_long(
         symbol=symbol,
         comment=f"zzCatzz from the Matrix is opening a LONG position on {symbol}.",
+        manual_settings=manual_settings,
     )
 
 
 @app.post("/api/manual/force-open-short")
 def manual_force_open_short(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:  # type: ignore[valid-type]
     symbol = str(payload.get("symbol", "ETHUSDT") or "ETHUSDT").upper()
+    manual_settings = {
+        "margin_boks": payload.get("margin_boks"),
+        "leverage": payload.get("leverage"),
+        "sl_percent": payload.get("sl_percent"),
+        "tp_percent": payload.get("tp_percent"),
+    }
     return runner.manual_force_open_short(
         symbol=symbol,
         comment=f"zzCatzz from the Matrix is opening a SHORT position on {symbol}.",
+        manual_settings=manual_settings,
     )
 
 

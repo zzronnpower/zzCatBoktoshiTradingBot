@@ -1317,55 +1317,55 @@ Vị thế DOGE hiện đã hiển thị ở Position Management và có thể m
 
 Không thay đổi flow UI trang khác.</pre></div>
 
-            <div class="msg user"><span class="who">User</span><pre>alo, mo du an boktoshi, nghien cuu tiep phan Strategy muon lam tiep, doc agents/project log/chatlog/psydocode4hsystem, cho toi biet co chay duoc ko</pre></div>
+            <div class="msg user"><span class="who">User</span><pre>alo, mở dự án boktoshi, nghiên cứu tiếp phần Strategy muốn làm tiếp, đọc agents/project log/chatlog/psydocode4hsystem, cho tôi biết có chạy được không</pre></div>
 
-            <div class="msg assistant"><span class="who">Assistant</span><pre>Da check toan bo tai lieu va code runtime hien tai.
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã check toàn bộ tài liệu và code runtime hiện tại.
 
-- He thong hien tai dang chay duoc (bot_status=strategy_state=running, last_tick moi, co signal/trade gan day).
-- Strategy moi theo PsudoCode4hSystem chua duoc code o thoi diem danh gia, nen chua the chay ngay.
-- Ket luan: core chay on, strategy moi implement duoc 100% neu coding day du indicator + state + risk mapping.</pre></div>
+- Hệ thống hiện tại đang chạy được (bot_status=strategy_state=running, last_tick mới, có signal/trade gần đây).
+- Strategy mới theo PsudoCode4hSystem chưa được code ở thời điểm đánh giá, nên chưa thể chạy ngay.
+- Kết luận: core chạy ổn, strategy mới implement được 100% nếu coding đầy đủ indicator + state + risk mapping.</pre></div>
 
-            <div class="msg user"><span class="who">User</span><pre>ok trien khai di, dua vao phan Strategy de toi lua chon chay, lam du 5 phase va neu muot thi tiep tuc den xong toan bo</pre></div>
+            <div class="msg user"><span class="who">User</span><pre>ok triển khai đi, đưa vào phần Strategy để tôi lựa chọn chạy, làm đủ 5 phase và nếu mượt thì tiếp tục đến xong toàn bộ</pre></div>
 
-            <div class="msg assistant"><span class="who">Assistant</span><pre>Da trien khai xong 4H_REGIME_SWITCH_V1 theo full rollout va dua vao Strategy selector:
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai xong 4H_REGIME_SWITCH_V1 theo full rollout và đưa vào Strategy selector:
 
-- Them strategy moi: `4H_REGIME_SWITCH_V1` trong bot runner list + select/run-all.
-- Them indicator deterministic: EMA200, ATR, ADX, RSI, Bollinger, Donchian, ATR slope.
-- Them state machine regime TREND/RANGE/NO_TRADE, chi danh gia tren nen 4H da dong.
-- Them risk controls: dynamic margin sizing theo risk 1% equity, cooldown bars, daily drawdown block.
-- Them position management cho strategy moi (trend/range exits + BE/trailing logic) va persist state vao KV.
-- Mo rong API status + overlay + Strategy Summary cho regime runtime.
-- Cap nhat chart overlay de hien regime markers/lines va status regime.
-- Bo sung test regression cho runner + overlay regime.
+- Thêm strategy mới: `4H_REGIME_SWITCH_V1` trong bot runner list + select/run-all.
+- Thêm indicator deterministic: EMA200, ATR, ADX, RSI, Bollinger, Donchian, ATR slope.
+- Thêm state machine regime TREND/RANGE/NO_TRADE, chỉ đánh giá trên nến 4H đã đóng.
+- Thêm risk controls: dynamic margin sizing theo risk 1% equity, cooldown bars, daily drawdown block.
+- Thêm position management cho strategy mới (trend/range exits + BE/trailing logic) và persist state vào KV.
+- Mở rộng API status + overlay + Strategy Summary cho regime runtime.
+- Cập nhật chart overlay để hiện regime markers/lines và status regime.
+- Bổ sung test regression cho runner + overlay regime.
 
-Ket qua verify:
+Kết quả verify:
 - `python3 -m compileall app BoktoshiBotModule tests` pass.
 - `pytest -q` pass: `25 passed`.</pre></div>
 
-            <div class="msg user"><span class="who">User</span><pre>theo pseudo code thi performance/concentration da dung chua? tuning la tuning gi?</pre></div>
+            <div class="msg user"><span class="who">User</span><pre>theo pseudo code thì performance/concentration đã đúng chưa? tuning là tuning gì?</pre></div>
 
-            <div class="msg assistant"><span class="who">Assistant</span><pre>Da giai thich ro:
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã giải thích rõ:
 
-- Core strategy da chay duoc, nhung performance/concentration chua toi uu het theo pseudo.
-- Tuning nghia la toi uu 3 nhom: hieu nang runtime (API/calc), concentration risk (phan bo vi the), va tham so strategy (nguong vao/ra/stop).
-- Chot ke hoach toi uu sau cho phase tiep theo voi focus max 2 LONG cung luc.</pre></div>
+- Core strategy đã chạy được, nhưng performance/concentration chưa tối ưu hết theo pseudo.
+- Tuning nghĩa là tối ưu 3 nhóm: hiệu năng runtime (API/calc), concentration risk (phân bổ vị thế), và tham số strategy (ngưỡng vào/ra/stop).
+- Chốt kế hoạch tối ưu sâu cho phase tiếp theo với focus max 2 LONG cùng lúc.</pre></div>
 
-            <div class="msg user"><span class="who">User</span><pre>ok, lam file Tunning4HRegimeStratery, dua plan + checklist + log vao do, roi code full phase 1-5 va report phase pass/fail.</pre></div>
+            <div class="msg user"><span class="who">User</span><pre>ok, làm file Tunning4HRegimeStratery, đưa plan + checklist + log vào đó, rồi code full phase 1-5 và report phase pass/fail.</pre></div>
 
-            <div class="msg assistant"><span class="who">Assistant</span><pre>Da thuc hien full yeu cau:
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã thực hiện full yêu cầu:
 
-- Tao file `Tunning4HRegimeStratery` gom plan/checklist/log/rubric pass-fail.
+- Tạo file `Tunning4HRegimeStratery` gồm plan/checklist/log/rubric pass-fail.
 - Code xong phase 1->5 cho tuning regime:
-  - cap cung strategy LONG: max total = 2, max per symbol = 1.
-  - allocator top-score cho multi-signal cung candle.
-  - cache snapshot 4H de giam recompute/fetch lap.
-  - them volatility-shock guard (ATR expansion skip).
-  - bo sung test cho cap + ranking + shock gate.
+  - cap cứng strategy LONG: max total = 2, max per symbol = 1.
+  - allocator top-score cho multi-signal cùng candle.
+  - cache snapshot 4H để giảm recompute/fetch lặp.
+  - thêm volatility-shock guard (ATR expansion skip).
+  - bổ sung test cho cap + ranking + shock gate.
 - Verify:
   - compileall pass,
   - pytest pass: 27 passed,
   - API smoke pass cho strategy/select/status/overlay,
-  - dev stack up va container dang running.
+  - dev stack up và container đang running.
 
 Report phase:
 - Phase 1: PASS
@@ -1374,11 +1374,11 @@ Report phase:
 - Phase 4: PASS
 - Phase 5: PASS</pre></div>
 
-            <div class="msg user"><span class="who">User</span><pre>ok lam</pre></div>
+            <div class="msg user"><span class="who">User</span><pre>ok làm</pre></div>
 
-            <div class="msg assistant"><span class="who">Assistant</span><pre>Da trien khai tiep phan observability cho regime tuning theo yeu cau:
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai tiếp phần observability cho regime tuning theo yêu cầu:
 
-- Them runtime counters rieng cho `4H_REGIME_SWITCH_V1`:
+- Thêm runtime counters riêng cho `4H_REGIME_SWITCH_V1`:
   - cap_blocked_total
   - symbol_cap_blocked_total
   - volatility_shock_skipped_total
@@ -1386,75 +1386,119 @@ Report phase:
   - candidates_opened_total
   - candidates_rejected_total
   - open_rate
-- Mo rong `/api/system/metrics` de tra ve `metrics.regime_tuning`.
-- Cap nhat Dashboard -> `System Health` de hien thi cac chi so tuning tren.
-- Bo sung test:
+- Mở rộng `/api/system/metrics` để trả về `metrics.regime_tuning`.
+- Cập nhật Dashboard -> `System Health` để hiển thị các chỉ số tuning trên.
+- Bổ sung test:
   - contract metrics regime trong `test_system_metrics.py`
-  - hanh vi counter open/reject + volatility shock trong `test_bot_runner_flows.py`
+  - hành vi counter open/reject + volatility shock trong `test_bot_runner_flows.py`
 
 Verify:
 - `python3 -m compileall app BoktoshiBotModule tests` pass.
 - `pytest -q` pass: 28 passed.
-- Smoke API `/api/system/metrics` co `regime_tuning` keys day du.
-- Dev stack van running binh thuong.</pre></div>
+- Smoke API `/api/system/metrics` có `regime_tuning` keys đầy đủ.
+- Dev stack vẫn running bình thường.</pre></div>
 
-            <div class="msg user"><span class="who">User</span><pre>Hien toi muon tat tu lay du lieu PNL History tren dashboard, chi refresh 1 lan khi bam Refresh Dashboard. Them nut toggle profile anti-rate limit/normal.</pre></div>
+            <div class="msg user"><span class="who">User</span><pre>Hiện tôi muốn tắt tự lấy dữ liệu PNL History trên dashboard, chỉ refresh 1 lần khi bấm Refresh Dashboard. Thêm nút toggle profile anti-rate limit/normal.</pre></div>
 
-            <div class="msg assistant"><span class="who">Assistant</span><pre>Da cap nhat Dashboard theo dung yeu cau:
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã cập nhật Dashboard theo đúng yêu cầu:
 
-- Them nut moi canh `Refresh Dashboard`:
+- Thêm nút mới cạnh `Refresh Dashboard`:
   - `Toggle Anti Rate Limit Profit`
-  - khi bat anti-rate se doi thanh `Toggle To Normal Running Profile`
-- Tao 2 profile polling client-side:
+  - khi bật anti-rate sẽ đổi thành `Toggle To Normal Running Profile`
+- Tạo 2 profile polling client-side:
   - Normal: core 8s + slow lane auto
-  - Anti-rate: core 30s + tat slow-lane auto
-- `PnL History` da chuyen sang manual-only:
-  - `/api/pnl-history` chi fetch khi bam `Refresh Dashboard`
-  - khong con auto fetch theo timer
-  - khong fetch khi bam `Refresh Finalized PnL` hoac `Clear Stale Pending Queue`
-- Luu profile mode vao `localStorage` va hien profile trong dong Live status.</pre></div>
+  - Anti-rate: core 30s + tắt slow-lane auto
+- `PnL History` đã chuyển sang manual-only:
+  - `/api/pnl-history` chỉ fetch khi bấm `Refresh Dashboard`
+  - không còn auto fetch theo timer
+  - không fetch khi bấm `Refresh Finalized PnL` hoặc `Clear Stale Pending Queue`
+- Lưu profile mode vào `localStorage` và hiện profile trong dòng Live status.</pre></div>
 
-            <div class="msg user"><span class="who">User</span><pre>gio chuyen sang lam cho xong phan ROADMAP di</pre></div>
+            <div class="msg user"><span class="who">User</span><pre>giờ chuyển sang làm cho xong phần ROADMAP đi</pre></div>
 
-            <div class="msg assistant"><span class="who">Assistant</span><pre>Da chot phuong an va trien khai theo huong startup auto-migration (cach 1) cho Phase C roadmap:
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã chốt phương án và triển khai theo hướng startup auto-migration (cách 1) cho Phase C roadmap:
 
-- Them cot persisted trong `journal_entries`:
+- Thêm cột persisted trong `journal_entries`:
   - `finalization_state`
   - `estimated_source`
 - Auto migrate + backfill ngay trong `init_db(...)` khi app startup.
-- Cap nhat write path de persist metadata nay tren moi lan replace/upsert.
-- Cap nhat read/decorate de uu tien gia tri persisted, fallback runtime inference neu can.
-- Them script migration bo tro: `scripts/migrate_journal_finalization_fields.py`.
-- Bo sung typed schemas (`app/schemas.py`) cho close record/integrity/metrics.
-- Bo sung test API + concurrency lock:
+- Cập nhật write path để persist metadata này trên mỗi lần replace/upsert.
+- Cập nhật read/decorate để ưu tiên giá trị persisted, fallback runtime inference nếu cần.
+- Thêm script migration bổ trợ: `scripts/migrate_journal_finalization_fields.py`.
+- Bổ sung typed schemas (`app/schemas.py`) cho close record/integrity/metrics.
+- Bổ sung test API + concurrency lock:
   - `/api/journal/refresh`
   - `/api/system/integrity-report`
-  - trigger/lock behavior cua journal sync.
-- Cap nhat `NEXT_ROADMAP.md` thanh COMPLETED va dong nhat checklist/log.
+  - trigger/lock behavior của journal sync.
+- Cập nhật `NEXT_ROADMAP.md` thành COMPLETED và đồng nhất checklist/log.
 
-Ket qua verify:
+Kết quả verify:
 - compileall pass
 - pytest pass: 32 passed
-- docker stack van running.
+- docker stack vẫn running.
 
-Ghi chu:
-- script migration chay thu local gap readonly DB trong session nay; startup auto-migration van la co che chinh khi db writable.</pre></div>
+Ghi chú:
+- script migration chạy thử local gặp readonly DB trong session này; startup auto-migration vẫn là cơ chế chính khi db writable.</pre></div>
 
-            <div class="msg user"><span class="who">User</span><pre>hien thay server khong chay duoc? ban check xem</pre></div>
+            <div class="msg user"><span class="who">User</span><pre>hiện thấy server không chạy được? bạn check xem</pre></div>
 
-            <div class="msg assistant"><span class="who">Assistant</span><pre>Da check ngay va tim ra nguyen nhan.
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã check ngay và tìm ra nguyên nhân.
 
-- Container van Up nhung process uvicorn tung crash luc reload.
-- Log loi goc:
+- Container vẫn Up nhưng process uvicorn từng crash lúc reload.
+- Log lỗi gốc:
   - `PydanticUserError: Please use typing_extensions.TypedDict instead of typing.TypedDict on Python < 3.12`.
-- Nguyen nhan: file `app/schemas.py` dang import `TypedDict` tu `typing` trong khi runtime image Python 3.11.
-- Da fix:
-  - doi sang `from typing_extensions import TypedDict`.
+- Nguyên nhân: file `app/schemas.py` đang import `TypedDict` từ `typing` trong khi runtime image Python 3.11.
+- Đã fix:
+  - đổi sang `from typing_extensions import TypedDict`.
 
-Ket qua sau fix:
-- service startup on dinh,
-- `GET /api/status` tra 200,
-- log container hien request API binh thuong.</pre></div>
+Kết quả sau fix:
+- service startup ổn định,
+- `GET /api/status` trả 200,
+- log container hiện request API bình thường.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>Phần chatlog sau này sao chữ tiếng việt nhưng không có dấu? bạn kiểm tra lại và sửa thành tiếng việt có dấu hết giùm</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã rà và sửa toàn bộ các đoạn chatlog mới bị gõ không dấu sang tiếng Việt có dấu.
+
+- Chuẩn hóa lại các đoạn user/assistant gần đây trong phần Strategy/roadmap/server fix.
+- Giữ nguyên cấu trúc HTML và thứ tự lịch sử hội thoại.
+- Không thay đổi nội dung kỹ thuật, chỉ chuẩn hóa ngôn ngữ hiển thị.
+
+Sau chỉnh sửa, phần chatlog hiển thị tiếng Việt có dấu đầy đủ.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>dự án BOktoshi, hãy chỉnh cho tôi manual positon cho phép mở 5 vị thế cùng lúc</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã chỉnh xong cho BOktoshi để manual position mở được tối đa 5 vị thế cùng lúc.
+
+- Cập nhật runtime guard trong `BoktoshiBotModule/bot_runner.py`:
+  - `MANUAL_MAX_POSITIONS`: `3` -&gt; `5`
+- Giữ nguyên toàn bộ guard an toàn khác (symbol whitelist, no-hedge, max positions global).
+- Bổ sung test hồi quy để khóa behavior mới:
+  - `test_manual_force_open_rejects_when_reaching_manual_limit_five` trong `tests/test_bot_runner_flows.py`.
+
+Bạn có thể mở đồng thời tối đa 5 vị thế manual ngay từ bây giờ.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>dự án boktoshi, tôi muốn mở vị thế Manual của cùng 1 pair, thì cứ treat nó như là 2 vị thế riêng biệt, thì vẫn là được đúng không? Mỗi vị thế có entry, tp,sl, size riêng, làm được thì phản hồi rồi tôi tiến hành làm</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Làm được, nhưng ở code hiện tại lúc đó chưa bật đầy đủ.
+
+- Hệ thống đang chặn mở manual trùng symbol.
+- API/manual UI lúc đó chỉ nhận `symbol`, nên size/sl/tp vẫn dùng profile chung.
+
+Nếu triển khai thì sẽ mở được nhiều vị thế manual cùng pair (same side), mỗi lệnh có thể truyền cấu hình riêng cho margin/leverage/sl/tp, còn guard chống hedge (LONG + SHORT cùng pair) vẫn giữ nguyên.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok, làm đi bạn, áp dụng cho phần Manual thôi</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai xong cho phần Manual.
+
+- Cho phép stack nhiều vị thế manual cùng symbol khi cùng side (mỗi lệnh là position độc lập).
+- Giữ nguyên guard no-hedge: nếu đã có LONG thì không mở SHORT cùng symbol và ngược lại.
+- Thêm override theo từng lệnh ở API/UI manual:
+  - `margin_boks`, `leverage`, `sl_percent`, `tp_percent` (optional)
+  - bỏ trống thì dùng Bot Settings global.
+- Đã thêm/cập nhật test để khóa behavior mới.
+
+Bạn có thể bắt đầu mở manual nhiều lệnh cùng pair theo cấu hình riêng từng lệnh.</pre></div>
           </div>
         </div>
       </section>

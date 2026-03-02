@@ -34,7 +34,7 @@ def _to_int(value: Any, default: int = 0) -> int:
 
 class BotRunner:
     MANUAL_ALLOWED_SYMBOLS = ["BTCUSDT", "ETHUSDT", "SOLUSDT", "TAOUSDT", "XRPUSDT", "HYPEUSDT", "PUMPUSDT", "DOGEUSDT"]
-    MANUAL_MAX_POSITIONS = 3
+    MANUAL_MAX_POSITIONS = 5
     STRATEGY_MA50 = "MA50_4H_CROSSUP_3C_LONG_ONLY"
     STRATEGY_EMA_RSI = "EMA_RSI_15M_ETH_ONLY"
     STRATEGY_REGIME_SWITCH = "4H_REGIME_SWITCH_V1"
@@ -720,6 +720,24 @@ class BotRunner:
             if str(pos.get("coin", "")).upper() == coin:
                 return True
         return False
+
+    def _resolve_manual_open_settings(self, payload: Optional[Dict[str, Any]] = None) -> Dict[str, float]:
+        raw = payload if isinstance(payload, dict) else {}
+
+        sl_pct = raw.get("sl_capital_pct")
+        if raw.get("sl_percent") is not None:
+            sl_pct = _to_float(raw.get("sl_percent"), self.sl_capital_pct * 100) / 100
+
+        tp_pct = raw.get("tp_capital_pct")
+        if raw.get("tp_percent") is not None:
+            tp_pct = _to_float(raw.get("tp_percent"), self.tp_capital_pct * 100) / 100
+
+        return {
+            "margin_boks": max(_to_float(raw.get("margin_boks"), self.margin_boks), 1.0),
+            "leverage": max(_to_float(raw.get("leverage"), self.leverage), 1.0),
+            "sl_capital_pct": max(_to_float(sl_pct, self.sl_capital_pct), 0.0001),
+            "tp_capital_pct": max(_to_float(tp_pct, self.tp_capital_pct), 0.0),
+        }
 
     def _has_open_side_on_coin(self, positions: List[Dict[str, Any]], coin: str, side: str) -> bool:
         target_coin = self._normalize_coin(coin)
@@ -1448,7 +1466,13 @@ class BotRunner:
                 error_code=exc.code,
             )
 
-    def manual_force_open(self, side: str, symbol: str = "ETHUSDT", comment: str = "Manual force open") -> Dict[str, Any]:
+    def manual_force_open(
+        self,
+        side: str,
+        symbol: str = "ETHUSDT",
+        comment: str = "Manual force open",
+        manual_settings: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
         now = int(time.time())
         if not self.client.api_key:
             return {"success": False, "message": "MTC_API_KEY is missing."}
@@ -1469,14 +1493,12 @@ class BotRunner:
         manual_ids = self._get_manual_position_ids()
         if len(manual_ids) >= self.MANUAL_MAX_POSITIONS:
             return {"success": False, "message": f"Manual position limit reached ({self.MANUAL_MAX_POSITIONS})."}
-        if self._manual_has_open_symbol(positions, target_symbol):
-            return {"success": False, "message": f"Manual {target_symbol} position is already open."}
         if self._has_open_side_on_coin(positions, target_coin, "LONG" if target_side == "SHORT" else "SHORT"):
             return {"success": False, "message": f"Hedge is disabled: opposite side already open on {target_symbol}."}
-        if self._has_open_side_on_coin(positions, target_coin, target_side):
-            return {"success": False, "message": f"{target_symbol} already has an open {target_side} position."}
         if len(positions) >= self.max_positions:
             return {"success": False, "message": "Max positions reached."}
+
+        trade_settings = self._resolve_manual_open_settings(manual_settings)
 
         capital = parse_total_capital(account)
         if capital <= 0:
@@ -1506,19 +1528,19 @@ class BotRunner:
             build_long_sl_tp_prices(
                 entry_price=entry_price,
                 capital=capital,
-                margin=self.margin_boks,
-                leverage=self.leverage,
-                sl_capital_pct=self.sl_capital_pct,
-                tp_capital_pct=self.tp_capital_pct,
+                margin=trade_settings["margin_boks"],
+                leverage=trade_settings["leverage"],
+                sl_capital_pct=trade_settings["sl_capital_pct"],
+                tp_capital_pct=trade_settings["tp_capital_pct"],
             )
             if target_side == "LONG"
             else build_short_sl_tp_prices(
                 entry_price=entry_price,
                 capital=capital,
-                margin=self.margin_boks,
-                leverage=self.leverage,
-                sl_capital_pct=self.sl_capital_pct,
-                tp_capital_pct=self.tp_capital_pct,
+                margin=trade_settings["margin_boks"],
+                leverage=trade_settings["leverage"],
+                sl_capital_pct=trade_settings["sl_capital_pct"],
+                tp_capital_pct=trade_settings["tp_capital_pct"],
             )
         )
 
@@ -1535,8 +1557,8 @@ class BotRunner:
         payload = {
             "coin": target_coin,
             "side": target_side,
-            "margin": self.margin_boks,
-            "leverage": self.leverage,
+            "margin": trade_settings["margin_boks"],
+            "leverage": trade_settings["leverage"],
             "stopLoss": stop_loss,
             "takeProfit": take_profit,
             "comment": payload_comment,
@@ -1549,8 +1571,8 @@ class BotRunner:
                 "OPEN",
                 target_coin,
                 target_side,
-                self.margin_boks,
-                self.leverage,
+                trade_settings["margin_boks"],
+                trade_settings["leverage"],
                 "DRY_RUN",
                 json.dumps(payload),
             )
@@ -1569,6 +1591,7 @@ class BotRunner:
                 "symbol": target_symbol,
                 "side": target_side,
                 "payload": payload,
+                "settings": trade_settings,
             }
 
         if not self._can_send_trade(now):
@@ -1582,8 +1605,8 @@ class BotRunner:
                 "OPEN",
                 target_coin,
                 target_side,
-                self.margin_boks,
-                self.leverage,
+                trade_settings["margin_boks"],
+                trade_settings["leverage"],
                 "OK",
                 json.dumps(response),
             )
@@ -1602,6 +1625,7 @@ class BotRunner:
                 "message": "Force open submitted.",
                 "symbol": target_symbol,
                 "side": target_side,
+                "settings": trade_settings,
                 "response": response,
             }
         except MTCClientError as exc:
@@ -1611,8 +1635,8 @@ class BotRunner:
                 "OPEN",
                 target_coin,
                 target_side,
-                self.margin_boks,
-                self.leverage,
+                trade_settings["margin_boks"],
+                trade_settings["leverage"],
                 "ERROR",
                 f"{exc} ({exc.code})",
             )
@@ -1627,11 +1651,21 @@ class BotRunner:
             )
             return {"success": False, "message": f"Open failed: {exc}", "code": exc.code}
 
-    def manual_force_open_long(self, symbol: str = "ETHUSDT", comment: str = "Manual force open") -> Dict[str, Any]:
-        return self.manual_force_open(side="LONG", symbol=symbol, comment=comment)
+    def manual_force_open_long(
+        self,
+        symbol: str = "ETHUSDT",
+        comment: str = "Manual force open",
+        manual_settings: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return self.manual_force_open(side="LONG", symbol=symbol, comment=comment, manual_settings=manual_settings)
 
-    def manual_force_open_short(self, symbol: str = "ETHUSDT", comment: str = "Manual force open") -> Dict[str, Any]:
-        return self.manual_force_open(side="SHORT", symbol=symbol, comment=comment)
+    def manual_force_open_short(
+        self,
+        symbol: str = "ETHUSDT",
+        comment: str = "Manual force open",
+        manual_settings: Optional[Dict[str, Any]] = None,
+    ) -> Dict[str, Any]:
+        return self.manual_force_open(side="SHORT", symbol=symbol, comment=comment, manual_settings=manual_settings)
 
     def manual_close_eth_positions(self, position_id: str, comment: str = "Manual close position") -> Dict[str, Any]:
         now = int(time.time())

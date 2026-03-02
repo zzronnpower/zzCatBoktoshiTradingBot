@@ -37,7 +37,7 @@
 
         <div class="card">
           <h2>Manual Trade Panel</h2>
-          <p class="muted">Pick a symbol, then open manual LONG or SHORT with current Bot Settings profile (hedge disabled per symbol).</p>
+          <p class="muted">Pick a symbol, then open manual LONG or SHORT. Same-side stacking on the same symbol is allowed; hedge (LONG+SHORT on same symbol) stays disabled.</p>
           <div class="kv-list" style="margin-top:10px;">
             <div class="kv-row">
               <span>Open Symbol</span>
@@ -53,6 +53,10 @@
               </select>
             </div>
             <div class="kv-row"><span>Config Preview</span><strong id="manual-config-preview">Loading...</strong></div>
+            <div class="kv-row"><span>Order Margin (optional)</span><input id="manual-open-size" type="number" min="1" step="1" placeholder="Use Bot Settings" style="max-width:170px;" /></div>
+            <div class="kv-row"><span>Order Leverage (optional)</span><input id="manual-open-lev" type="number" min="1" step="0.1" placeholder="Use Bot Settings" style="max-width:170px;" /></div>
+            <div class="kv-row"><span>Order SL % (optional)</span><input id="manual-open-sl" type="number" min="0.01" step="0.01" placeholder="Use Bot Settings" style="max-width:170px;" /></div>
+            <div class="kv-row"><span>Order TP % (optional)</span><input id="manual-open-tp" type="number" min="0" step="0.01" placeholder="Use Bot Settings" style="max-width:170px;" /></div>
           </div>
           <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
             <button id="btn-open-long" class="btn btn-primary">OPEN Manual LONG Position</button>
@@ -128,6 +132,16 @@
 
     <script>
       const money = (n) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+
+      function parseOptionalNumber(value, minValue = null, allowZero = false) {
+        const raw = String(value ?? '').trim();
+        if (!raw) return null;
+        const parsed = Number(raw);
+        if (!Number.isFinite(parsed)) return null;
+        if (allowZero && parsed === 0) return 0;
+        if (minValue !== null && parsed < minValue) return null;
+        return parsed;
+      }
       const tsMs = (ms) => {
         if (!ms) return '-';
         const d = new Date(Number(ms));
@@ -424,7 +438,7 @@
         document.getElementById('cfg-lev').value = Number(cfg.leverage || 0).toFixed(2).replace(/\.00$/, '');
         document.getElementById('cfg-sl').value = Number(cfg.sl_percent || 0).toFixed(2).replace(/\.00$/, '');
         document.getElementById('cfg-tp').value = Number(cfg.tp_percent || 0).toFixed(2).replace(/\.00$/, '');
-        document.getElementById('manual-config-preview').textContent = `Margin ${Number(cfg.margin_boks || 0).toFixed(2)} BOKS | Leverage x${Number(cfg.leverage || 0).toFixed(2)} | SL ${Number(cfg.sl_percent || 0).toFixed(2)}% | TP ${Number(cfg.tp_percent || 0).toFixed(2)}%`;
+        document.getElementById('manual-config-preview').textContent = `Default Margin ${Number(cfg.margin_boks || 0).toFixed(2)} BOKS | Leverage x${Number(cfg.leverage || 0).toFixed(2)} | SL ${Number(cfg.sl_percent || 0).toFixed(2)}% | TP ${Number(cfg.tp_percent || 0).toFixed(2)}%`;
       }
 
       async function saveSettings() {
@@ -461,11 +475,20 @@
         btn.textContent = 'Opening...';
         try {
           const symbol = document.getElementById('manual-open-symbol').value || 'ETHUSDT';
+          const marginBoks = parseOptionalNumber(document.getElementById('manual-open-size').value, 1, false);
+          const leverage = parseOptionalNumber(document.getElementById('manual-open-lev').value, 1, false);
+          const slPercent = parseOptionalNumber(document.getElementById('manual-open-sl').value, 0.01, false);
+          const tpPercent = parseOptionalNumber(document.getElementById('manual-open-tp').value, 0, true);
           const endpoint = isShort ? '/api/manual/force-open-short' : '/api/manual/force-open-long';
+          const payload = { symbol };
+          if (marginBoks !== null) payload.margin_boks = marginBoks;
+          if (leverage !== null) payload.leverage = leverage;
+          if (slPercent !== null) payload.sl_percent = slPercent;
+          if (tpPercent !== null) payload.tp_percent = tpPercent;
           const data = await fetchJson(endpoint, {
             method: 'POST',
             headers: { 'Content-Type': 'application/json' },
-            body: JSON.stringify({ symbol }),
+            body: JSON.stringify(payload),
           });
           renderResult(data, !data.success);
           await refreshPositions();

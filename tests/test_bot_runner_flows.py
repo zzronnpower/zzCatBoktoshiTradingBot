@@ -215,7 +215,83 @@ def test_manual_force_open_long_rejects_if_manual_short_same_symbol_exists(tmp_p
     result = runner.manual_force_open_long(symbol="ETHUSDT")
 
     assert result["success"] is False
-    assert "already open" in result["message"]
+    assert "Hedge is disabled" in result["message"]
+
+
+def test_manual_force_open_long_allows_multiple_same_symbol_same_side(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+    runner._set_manual_position_ids(["m-long-existing"])
+
+    monkeypatch.setattr(runner, "_fetch_account", lambda now: {"boks": {"balance": 1000, "lockedMargin": 0}})
+    monkeypatch.setattr(
+        runner,
+        "_fetch_positions",
+        lambda now: [{"positionId": "m-long-existing", "coin": "ETH", "side": "LONG", "openedAt": 1000}],
+    )
+    monkeypatch.setattr(runner, "_sync_owned_position_ids", lambda now, positions: None)
+    monkeypatch.setattr(runner, "_can_send_trade", lambda now: True)
+    monkeypatch.setattr(runner.hyperliquid, "get_candles", lambda coin, interval, bars: [{"close": 2000.0}])
+    monkeypatch.setattr(runner, "_capture_manual_position_id", lambda *args, **kwargs: None)
+
+    captured = {}
+
+    def fake_open_trade(payload):
+        captured["payload"] = payload
+        return {"positionId": "m-long-new"}
+
+    monkeypatch.setattr(runner.client, "open_trade", fake_open_trade)
+
+    result = runner.manual_force_open_long(symbol="ETHUSDT")
+
+    assert result["success"] is True
+    assert captured["payload"]["side"] == "LONG"
+
+
+def test_manual_force_open_uses_per_order_settings_override(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+
+    monkeypatch.setattr(runner, "_fetch_account", lambda now: {"boks": {"balance": 1000, "lockedMargin": 0}})
+    monkeypatch.setattr(runner, "_fetch_positions", lambda now: [])
+    monkeypatch.setattr(runner, "_sync_owned_position_ids", lambda now, positions: None)
+    monkeypatch.setattr(runner, "_can_send_trade", lambda now: True)
+    monkeypatch.setattr(runner.hyperliquid, "get_candles", lambda coin, interval, bars: [{"close": 2000.0}])
+    monkeypatch.setattr(runner, "_capture_manual_position_id", lambda *args, **kwargs: None)
+
+    captured = {}
+
+    def fake_open_trade(payload):
+        captured["payload"] = payload
+        return {"positionId": "m-custom"}
+
+    monkeypatch.setattr(runner.client, "open_trade", fake_open_trade)
+
+    result = runner.manual_force_open_long(
+        symbol="ETHUSDT",
+        manual_settings={"margin_boks": 250, "leverage": 8, "sl_percent": 2.5, "tp_percent": 6.5},
+    )
+
+    assert result["success"] is True
+    payload = captured["payload"]
+    assert payload["margin"] == 250
+    assert payload["leverage"] == 8
+    assert payload["stopLoss"] > 0
+    assert payload["takeProfit"] > 0
+    assert result["settings"]["margin_boks"] == 250
+    assert result["settings"]["leverage"] == 8
+
+
+def test_manual_force_open_rejects_when_reaching_manual_limit_five(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+    runner._set_manual_position_ids(["m1", "m2", "m3", "m4", "m5"])
+
+    monkeypatch.setattr(runner, "_fetch_account", lambda now: {"boks": {"balance": 1000, "lockedMargin": 0}})
+    monkeypatch.setattr(runner, "_fetch_positions", lambda now: [])
+    monkeypatch.setattr(runner, "_sync_owned_position_ids", lambda now, positions: None)
+
+    result = runner.manual_force_open_long(symbol="ETHUSDT")
+
+    assert result["success"] is False
+    assert "limit reached (5)" in result["message"]
 
 
 def test_manual_close_all_positions_closes_only_manual_owned(tmp_path, monkeypatch):

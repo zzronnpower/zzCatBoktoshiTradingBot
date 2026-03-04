@@ -4,87 +4,240 @@
     <meta charset="utf-8" />
     <meta name="viewport" content="width=device-width, initial-scale=1" />
     <title>AsterTrading - zzCatBoktoshiTradingBot</title>
-    <link rel="stylesheet" href="/static/app.css" />
     <style>
-      .aster-grid { display: grid; grid-template-columns: 1.2fr 1fr; gap: 16px; }
-      .aster-inner { display: grid; grid-template-columns: repeat(2, minmax(260px, 1fr)); gap: 16px; }
-      .acct-panel { background: linear-gradient(180deg, var(--panel) 0%, var(--panel-soft) 100%); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
-      .acct-actions { display: flex; gap: 8px; margin: 10px 0 14px; }
-      .acct-btn { flex: 1; border: 1px solid var(--line); background: var(--input-bg); color: var(--accent); border-radius: 8px; padding: 10px; font-weight: 700; }
-      .acct-section-title { font-size: 26px; margin: 0; }
-      .acct-subtitle { color: var(--muted); margin: 10px 0; font-size: 20px; }
-      .acct-row { display: flex; justify-content: space-between; align-items: center; padding: 7px 0; border-bottom: 1px dashed rgba(255,255,255,.08); }
-      .acct-row span { color: var(--muted); }
-      .acct-row strong { color: var(--text); }
-      .trade-panel { background: linear-gradient(180deg, var(--panel) 0%, var(--panel-soft) 100%); border: 1px solid var(--line); border-radius: 12px; padding: 16px; }
-      .trade-tabs { display: flex; gap: 16px; border-bottom: 1px solid var(--line); padding-bottom: 10px; margin-bottom: 14px; }
-      .trade-tabs button { background: transparent; border: 0; color: var(--muted); font-size: 28px; cursor: pointer; }
-      .trade-tabs button.active { color: var(--text); font-weight: 700; }
-      .trade-row { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; margin-bottom: 10px; }
-      .trade-field { display: flex; flex-direction: column; gap: 6px; }
-      .trade-field label { font-size: 12px; color: var(--muted); text-transform: uppercase; }
-      .trade-field input, .trade-field select { background: var(--input-bg); color: var(--text); border: 1px solid var(--line); border-radius: 8px; padding: 10px; font-size: 14px; }
-      .trade-toggle { display: flex; align-items: center; gap: 8px; margin: 10px 0; color: var(--text); }
-      .trade-quick { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin: 12px 0; }
-      .trade-quick div { border: 1px solid var(--line); border-radius: 8px; padding: 8px; background: var(--input-bg); }
-      .trade-quick span { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; }
-      .trade-quick strong { font-size: 15px; }
-      .aster-actions { display: grid; grid-template-columns: 1fr 1fr; gap: 8px; margin-top: 12px; }
-      .btn-long { background: linear-gradient(180deg, var(--accent) 0%, #56aba5 100%); color: var(--button-text); border: 0; border-radius: 8px; padding: 12px; font-weight: 700; cursor: pointer; }
-      .btn-close-aster { background: linear-gradient(180deg, #f29c62 0%, #d47434 100%); color: var(--button-text); border: 0; border-radius: 8px; padding: 12px; font-weight: 700; cursor: pointer; }
-      .mono-box { border: 1px solid var(--line); border-radius: 10px; background: rgba(0,0,0,.18); padding: 10px; max-height: 240px; overflow: auto; font-family: ui-monospace, SFMono-Regular, Menlo, monospace; font-size: 12px; }
-      @media (max-width: 1100px) {
-        .aster-grid { grid-template-columns: 1fr; }
+      :root {
+        --bg: #121212;
+        --panel: #181818;
+        --panel-2: #1f1f1f;
+        --line: #2c2c2c;
+        --text: #e8e8e8;
+        --muted: #9f9f9f;
+        --accent: #84d8d1;
+        --gold: #d7b678;
+        --danger: #e07862;
+        --ok: #6ec6b0;
       }
-      @media (max-width: 720px) {
-        .aster-inner { grid-template-columns: 1fr; }
-        .trade-row { grid-template-columns: 1fr; }
-        .trade-quick { grid-template-columns: 1fr 1fr; }
+      html[data-theme="aster"],
+      body.theme-aster {
+        --bg: #111214;
+        --panel: #17191d;
+        --panel-2: #20242b;
+        --line: #2b3038;
+        --text: #e6e9ee;
+        --muted: #9da6b2;
+        --accent: #d8b97a;
+        --gold: #d8b97a;
+        --danger: #e07d6d;
+        --ok: #79cdb9;
+      }
+      * { box-sizing: border-box; }
+      body {
+        margin: 0;
+        font-family: "IBM Plex Sans", "Segoe UI", sans-serif;
+        background: radial-gradient(circle at top right, #1f1f1f 0, var(--bg) 60%);
+        color: var(--text);
+      }
+      html[data-theme="aster"] body,
+      body.theme-aster {
+        font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+        letter-spacing: 0.08px;
+      }
+      .wrap { max-width: 1500px; margin: 0 auto; padding: 16px; }
+      .top {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 14px;
+        border: 1px solid var(--line);
+        background: #171717;
+        border-radius: 10px;
+        padding: 12px;
+      }
+      .brand { font-size: 22px; font-weight: 700; letter-spacing: .4px; }
+      .nav { display: flex; gap: 10px; flex-wrap: wrap; }
+      .nav a {
+        color: var(--muted);
+        text-decoration: none;
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 7px 10px;
+      }
+      .nav a.active { color: var(--text); border-color: var(--gold); }
+      .grid {
+        display: grid;
+        grid-template-columns: 1fr 1.05fr;
+        gap: 14px;
+      }
+      .card {
+        border: 1px solid var(--line);
+        background: linear-gradient(180deg, #1a1a1a 0%, #151515 100%);
+        border-radius: 12px;
+        padding: 14px;
+      }
+      h2 { margin: 0 0 10px; font-size: 26px; }
+      .row2 { display: grid; grid-template-columns: 1fr 1fr; gap: 10px; }
+      .field { display: flex; flex-direction: column; gap: 6px; }
+      .field label { font-size: 12px; color: var(--muted); text-transform: uppercase; letter-spacing: .3px; }
+      input, select {
+        width: 100%;
+        background: var(--panel-2);
+        border: 1px solid var(--line);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 11px;
+        font-size: 15px;
+      }
+      .tabs { display: flex; gap: 12px; border-bottom: 1px solid var(--line); margin-bottom: 10px; }
+      .tabs button {
+        border: 0;
+        background: transparent;
+        color: var(--muted);
+        font-size: 28px;
+        padding: 3px 0 8px;
+        cursor: pointer;
+      }
+      .tabs button.active { color: var(--text); font-weight: 700; }
+      .hint {
+        font-size: 13px;
+        color: var(--muted);
+        border: 1px dashed var(--line);
+        border-radius: 8px;
+        padding: 10px;
+        margin-top: 8px;
+      }
+      .quick {
+        display: grid;
+        grid-template-columns: repeat(4, minmax(0, 1fr));
+        gap: 8px;
+        margin-top: 10px;
+      }
+      .quick .box {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        padding: 9px;
+        background: #212121;
+      }
+      .quick .box span { font-size: 11px; color: var(--muted); text-transform: uppercase; display: block; }
+      .quick .box strong { font-size: 22px; }
+      .actions { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 8px; margin-top: 12px; }
+      button.btn {
+        border: 0;
+        border-radius: 8px;
+        padding: 11px;
+        font-weight: 700;
+        cursor: pointer;
+      }
+      .btn-main { background: var(--accent); color: #111; }
+      .btn-gold { background: var(--gold); color: #131313; }
+      .btn-danger { background: var(--danger); color: #131313; }
+      .btn-muted { background: #343434; color: var(--text); }
+      .right-grid { display: grid; grid-template-columns: 1fr; gap: 14px; }
+      .head-row { display: flex; justify-content: space-between; align-items: center; gap: 8px; margin-bottom: 10px; }
+      table { width: 100%; border-collapse: collapse; font-size: 13px; }
+      th, td { border-bottom: 1px solid #262626; padding: 8px 6px; text-align: left; }
+      th { color: var(--muted); font-weight: 600; }
+      .mono { max-height: 230px; overflow: auto; border: 1px solid var(--line); border-radius: 8px; background: #151515; padding: 8px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+      .selected-row td { background: rgba(132, 216, 209, 0.12); }
+      .selected-row td:first-child { border-left: 2px solid var(--accent); }
+      .side-chip {
+        display: inline-block;
+        font-size: 11px;
+        line-height: 1;
+        padding: 4px 7px;
+        border-radius: 999px;
+        font-weight: 700;
+        letter-spacing: .25px;
+      }
+      .side-long { background: rgba(110, 198, 176, 0.18); color: #9de4d2; }
+      .side-short { background: rgba(224, 120, 98, 0.18); color: #ffb6a8; }
+      .selected-chip {
+        display: inline-block;
+        border: 1px solid var(--line);
+        border-radius: 7px;
+        color: var(--accent);
+        padding: 2px 8px;
+        font-size: 12px;
+        margin-bottom: 8px;
+      }
+      .resp-controls { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
+      .resp-summary {
+        border: 1px solid var(--line);
+        border-radius: 8px;
+        background: #171717;
+        padding: 9px;
+        margin-bottom: 8px;
+        display: grid;
+        grid-template-columns: 1fr;
+      }
+      .resp-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid #252525; }
+      .resp-row:last-child { border-bottom: 0; }
+      .resp-k { color: var(--muted); }
+      .toggle { display: flex; align-items: center; gap: 8px; margin-top: 8px; color: var(--text); }
+      .toggle input { width: 16px; height: 16px; }
+      .muted { color: var(--muted); }
+      @media (max-width: 1180px) {
+        .grid { grid-template-columns: 1fr; }
+      }
+      @media (max-width: 760px) {
+        .tabs button { font-size: 28px; }
+        .actions { grid-template-columns: 1fr 1fr; }
+        .quick { grid-template-columns: 1fr 1fr; }
+        .row2 { grid-template-columns: 1fr; }
+      }
+      @media (min-width: 1100px) {
+        .resp-summary { grid-template-columns: 1fr 1fr; column-gap: 16px; }
+      }
+      .theme-dock {
+        position: fixed;
+        right: 14px;
+        bottom: 14px;
+        z-index: 999;
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        background: linear-gradient(180deg, #1a1a1a 0%, #151515 100%);
+        color: var(--text);
+        padding: 8px 10px;
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        box-shadow: 0 8px 24px rgba(0, 0, 0, 0.25);
+      }
+      .theme-dock label { color: var(--muted); font-size: 12px; }
+      .theme-dock select {
+        border: 1px solid var(--line);
+        background: var(--panel-2);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 6px 8px;
       }
     </style>
   </head>
   <body>
-    <div class="page">
-      <header class="header">
-        <h1>AsterTrading</h1>
-        <p>ASTER Futures manual trading panel for ETHUSDT.</p>
-        <div class="nav-links">
+    <div class="wrap">
+      <div class="top">
+        <div class="brand">ASTER Trading Panel</div>
+        <div class="nav">
           <a href="/">Dashboard</a>
-          <a href="/manual" class="nav-position-management">Position Management</a>
-          <a href="/journal">Boktoshi Trading Journal</a>
+          <a href="/manual">Position Management</a>
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading" class="active">AsterTrading</a>
-          <a href="/chatlog">ChatLog</a>
+          <a href="/aster-simple-trading">AsterSimpleTrading</a>
         </div>
-      </header>
+      </div>
 
-      <section class="aster-grid">
-        <div class="acct-panel">
-          <h2 class="acct-section-title">Account</h2>
-          <div class="acct-actions">
-            <button class="acct-btn" type="button">Deposit</button>
-            <button class="acct-btn" type="button">Withdraw</button>
-            <button class="acct-btn" type="button">Transfer</button>
-          </div>
-          <h3 class="acct-subtitle">Account Equity</h3>
-          <div id="acct-equity"></div>
-          <h3 class="acct-subtitle" style="margin-top:14px;">Margin</h3>
-          <div id="acct-margin"></div>
-        </div>
-
-        <div class="trade-panel">
-          <div class="trade-tabs">
-            <button class="active" data-type="MARKET" type="button">Market</button>
-            <button data-type="LIMIT" type="button">Limit</button>
-            <button data-type="STOP" type="button">Stop Limit</button>
+      <section class="grid">
+        <div class="card">
+          <div class="tabs">
+            <button id="tab-market" class="active" type="button">Market</button>
+            <button id="tab-limit" type="button">Limit</button>
           </div>
 
-          <div class="trade-row">
-            <div class="trade-field">
+          <div class="row2">
+            <div class="field">
               <label>Pair</label>
-              <input id="f-symbol" value="ETHUSDT" readonly />
+              <select id="f-symbol"></select>
             </div>
-            <div class="trade-field">
+            <div class="field">
               <label>Dry Run</label>
               <select id="f-dryrun">
                 <option value="true">true</option>
@@ -93,102 +246,172 @@
             </div>
           </div>
 
-          <div class="trade-row">
-            <div class="trade-field"><label>Leverage (x)</label><input id="f-leverage" type="number" min="1" max="125" value="5" /></div>
-            <div class="trade-field"><label>Notional (USDT)</label><input id="f-notional" type="number" min="1" step="0.1" value="400" /></div>
+          <div class="row2">
+            <div class="field"><label>Direction</label><select id="f-side"><option value="BUY">Long (BUY)</option><option value="SELL">Short (SELL)</option></select></div>
+            <div class="field"><label>Entry Price</label><input id="f-price" type="number" min="0" step="0.01" placeholder="For LIMIT only" /></div>
           </div>
 
-          <div class="trade-row">
-            <div class="trade-field"><label>SL (%)</label><input id="f-sl" type="number" min="0.01" step="0.01" value="5" /></div>
-            <div class="trade-field"><label>TP (%)</label><input id="f-tp" type="number" min="0" step="0.1" value="15" /></div>
+          <div class="row2">
+            <div class="field"><label>Margin (USDT)</label><input id="f-margin" type="number" min="1" step="0.1" value="80" /></div>
+            <div class="field"><label>Leverage (x)</label><input id="f-leverage" type="number" min="1" max="125" value="5" /></div>
           </div>
 
-          <div class="trade-row">
-            <div class="trade-field"><label>Limit Price</label><input id="f-price" type="number" min="0" step="0.01" placeholder="Only for limit/stop" /></div>
-            <div class="trade-field"><label>Trigger Price</label><input id="f-trigger" type="number" min="0" step="0.01" placeholder="Stop trigger" /></div>
+          <div class="row2">
+            <div class="field"><label>Stoploss (%)</label><input id="f-sl" type="number" min="0.01" step="0.01" value="5" /></div>
+            <div class="field"><label>Take Profit (%)</label><input id="f-tp" type="number" min="0" step="0.01" value="15" /></div>
           </div>
 
-          <div class="trade-row">
-            <div class="trade-field">
-              <label>Time In Force</label>
-              <select id="f-tif">
-                <option value="GTC">GTC</option>
-                <option value="IOC">IOC</option>
-                <option value="FOK">FOK</option>
-              </select>
-            </div>
-            <div class="trade-field">
-              <label>Direction</label>
-              <select id="f-side">
-                <option value="BUY">Long (BUY)</option>
-                <option value="SELL">Short (SELL)</option>
-              </select>
-            </div>
+          <label class="toggle"><input id="f-enable-tpsl" type="checkbox" checked /> TP/SL enabled</label>
+          <label class="toggle"><input id="f-auto-1pct" type="checkbox" /> 1% Stoploss (auto from account risk)</label>
+
+          <div class="hint" id="sl-note">SL reference: -</div>
+
+          <div class="quick">
+            <div class="box"><span>Risk</span><strong id="q-risk">-</strong></div>
+            <div class="box"><span>Margin</span><strong id="q-margin">-</strong></div>
+            <div class="box"><span>Qty</span><strong id="q-qty">-</strong></div>
+            <div class="box"><span>Mark</span><strong id="q-mark">-</strong></div>
           </div>
 
-          <label class="trade-toggle"><input id="f-enable-tpsl" type="checkbox" checked /> TP/SL</label>
-          <label class="trade-toggle"><input id="f-reduce-only" type="checkbox" /> Reduce-only</label>
-
-          <div class="trade-quick">
-            <div><span>Risk</span><strong id="q-risk">-</strong></div>
-            <div><span>Margin</span><strong id="q-margin">-</strong></div>
-            <div><span>Qty</span><strong id="q-qty">-</strong></div>
-            <div><span>Mark</span><strong id="q-mark">-</strong></div>
-          </div>
-
-          <div class="aster-actions">
-            <button id="btn-preview" class="btn btn-warning" type="button">Preview</button>
-            <button id="btn-open" class="btn-long" type="button">Open Order</button>
-            <button id="btn-close" class="btn-close-aster" type="button">Close Position</button>
+          <div class="actions">
+            <button id="btn-preview" class="btn btn-gold" type="button">Preview</button>
+            <button id="btn-open" class="btn btn-main" type="button">Open Order</button>
+            <button id="btn-close-symbol" class="btn btn-danger" type="button">Close Symbol</button>
+            <button id="btn-close-all" class="btn btn-muted" type="button">Close All</button>
           </div>
         </div>
-      </section>
 
-      <section class="aster-inner" style="margin-top: 16px;">
-        <div class="card"><h2>Open Positions</h2><div id="open-positions">Loading...</div></div>
-        <div class="card"><h2>Open Orders</h2><div id="open-orders">Loading...</div></div>
-        <div class="card"><h2>Trade History</h2><div id="trade-history">Loading...</div></div>
-        <div class="card"><h2>Income / PnL History</h2><div id="pnl-history">Loading...</div></div>
-      </section>
+        <div class="right-grid">
+          <div class="card">
+            <div class="head-row">
+              <h2 style="margin:0">Account</h2>
+              <div style="display:flex; gap:8px;">
+                <button id="btn-check-connection" class="btn btn-muted" type="button">Check API Auth</button>
+                <button id="btn-refresh-account" class="btn btn-gold" type="button">Refresh Account</button>
+              </div>
+            </div>
+            <div id="connection-box" class="muted" style="margin-bottom:8px;">Connection check not run yet.</div>
+            <div id="account-box" class="muted">Click Refresh Account to load latest account snapshot.</div>
+          </div>
 
-      <section class="grid" style="margin-top: 16px;">
-        <div class="card"><h2>Latest Response</h2><div id="response-box" class="mono-box">Idle</div></div>
+          <div class="card">
+            <div class="head-row">
+              <h2 style="margin:0">Live Positions / Orders</h2>
+              <span class="muted">Auto refresh every 3s</span>
+            </div>
+            <div id="open-positions"></div>
+            <div style="height:10px"></div>
+            <div id="open-orders"></div>
+          </div>
+
+          <div class="card">
+            <h2 style="margin:0 0 8px">Latest Response</h2>
+            <div class="resp-controls">
+              <span class="muted">Structured response view</span>
+              <button id="btn-toggle-raw" class="btn btn-muted" type="button" style="padding:6px 10px;">Show Raw JSON</button>
+            </div>
+            <div id="response-summary" class="resp-summary muted">Idle</div>
+            <div id="response-box" class="mono" style="display:none"></div>
+          </div>
+        </div>
       </section>
     </div>
 
     <script>
-      const money = (n, max = 2) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: max });
+      const money = (n, max = 4) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: max });
       let orderType = 'MARKET';
+      let responseRawVisible = false;
 
       async function fetchJson(path, options = {}) {
         const res = await fetch(path, options);
         if (!res.ok) {
-          const txt = await res.text();
-          throw new Error(`${res.status} ${txt}`);
+          const text = await res.text();
+          throw new Error(`${res.status} ${text}`);
         }
         return res.json();
+      }
+
+      function setOrderType(type) {
+        orderType = type;
+        document.getElementById('tab-market').classList.toggle('active', type === 'MARKET');
+        document.getElementById('tab-limit').classList.toggle('active', type === 'LIMIT');
+        const input = document.getElementById('f-price');
+        input.disabled = type !== 'LIMIT';
+        input.placeholder = type === 'LIMIT' ? 'Required for LIMIT' : 'Not used for MARKET';
       }
 
       function tableHtml(columns, rows) {
         if (!rows || !rows.length) return '<p class="muted">No data.</p>';
         const head = columns.map((c) => `<th>${c}</th>`).join('');
-        const body = rows.map((r) => `<tr>${r.map((x) => `<td>${x}</td>`).join('')}</tr>`).join('');
-        return `<div class="table-wrap"><table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table></div>`;
+        const body = rows.map((r) => {
+          const cells = Array.isArray(r) ? r : (r.cells || []);
+          const className = Array.isArray(r) ? '' : (r.className || '');
+          return `<tr class="${className}">${cells.map((x) => `<td>${x}</td>`).join('')}</tr>`;
+        }).join('');
+        return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
+      }
+
+      function esc(value) {
+        return String(value ?? '-')
+          .replace(/&/g, '&amp;')
+          .replace(/</g, '&lt;')
+          .replace(/>/g, '&gt;')
+          .replace(/"/g, '&quot;')
+          .replace(/'/g, '&#39;');
+      }
+
+      function summaryRow(k, v) {
+        return `<div class="resp-row"><span class="resp-k">${esc(k)}</span><strong>${esc(v)}</strong></div>`;
+      }
+
+      function renderResponse(data) {
+        const responseBox = document.getElementById('response-box');
+        const summaryBox = document.getElementById('response-summary');
+        if (typeof data === 'string') {
+          const lower = data.toLowerCase();
+          const hint = lower.includes('invalid api-key') || lower.includes('permissions')
+            ? 'Check ASTER key/secret, Futures permission, and IP whitelist.'
+            : '';
+          summaryBox.innerHTML = summaryRow('Message', data) + (hint ? summaryRow('Hint', hint) : '');
+          responseBox.textContent = data;
+          return;
+        }
+        const preview = data?.preview || data || {};
+        const rows = [
+          summaryRow('Status', data?.success === false ? 'FAILED' : 'OK'),
+          summaryRow('Pair', preview.symbol || data?.symbol || '-'),
+          summaryRow('Side / Type', `${preview.side || '-'} / ${preview.order_type || preview.type || '-'}`),
+          summaryRow('Entry / Mark', `${money(preview.entry_price || 0)} / ${money(preview.mark_price || preview.entry_price || 0)}`),
+          summaryRow('Qty / Notional', `${money(preview.quantity || 0, 6)} / ${money(preview.notional_usdt || 0, 2)} USDT`),
+          summaryRow('Margin / Risk', `${money(preview.margin_usdt || 0, 2)} / ${money(preview.risk_usdt || 0, 2)} USDT`),
+          summaryRow('SL / TP', `${money(preview.stop_price || 0)} / ${money(preview.take_profit_price || 0)}`),
+        ];
+        const warnings = Array.isArray(preview.warnings) ? preview.warnings : [];
+        if (warnings.length) {
+          rows.push(summaryRow('Warnings', warnings.join(' | ')));
+        }
+        if (typeof data?.message === 'string' && data.message.trim()) {
+          rows.push(summaryRow('Message', data.message));
+        }
+        summaryBox.innerHTML = rows.join('');
+        responseBox.textContent = JSON.stringify(data, null, 2);
       }
 
       function formPayload() {
+        const leverage = Number(document.getElementById('f-leverage').value || 5);
+        const margin = Number(document.getElementById('f-margin').value || 80);
         return {
+          symbol: document.getElementById('f-symbol').value,
           side: document.getElementById('f-side').value,
           order_type: orderType,
-          leverage: Number(document.getElementById('f-leverage').value || 5),
-          notional_usdt: Number(document.getElementById('f-notional').value || 400),
+          leverage,
+          margin_usdt: margin,
+          notional_usdt: leverage * margin,
           stop_loss_pct: Number(document.getElementById('f-sl').value || 5) / 100,
           take_profit_pct: Number(document.getElementById('f-tp').value || 15) / 100,
-          price: Number(document.getElementById('f-price').value || 0),
-          trigger_price: Number(document.getElementById('f-trigger').value || 0),
-          time_in_force: document.getElementById('f-tif').value,
-          reduce_only: document.getElementById('f-reduce-only').checked,
+          auto_stoploss_1pct: document.getElementById('f-auto-1pct').checked,
           enable_tpsl: document.getElementById('f-enable-tpsl').checked,
+          price: Number(document.getElementById('f-price').value || 0),
           dry_run: document.getElementById('f-dryrun').value === 'true',
         };
       }
@@ -196,20 +419,22 @@
       function renderAccount(data) {
         const eq = data.account_equity || {};
         const mg = data.margin || {};
-        document.getElementById('acct-equity').innerHTML = [
-          ['Spot total value', `${money(eq.spot_total_value)} USDT`],
-          ['Perp total value', `${money(eq.perp_total_value)} USDT`],
-          ['Perpetuals unrealized PnL', `${money(eq.perp_unrealized_pnl)} USDT`],
-          ['Shield unrealized PnL', `${money(eq.shield_unrealized_pnl)} USDT`],
-        ].map((r) => `<div class="acct-row"><span>${r[0]}</span><strong>${r[1]}</strong></div>`).join('');
-
-        document.getElementById('acct-margin').innerHTML = [
-          ['Account Margin Ratio', `${Number(mg.account_margin_ratio_pct || 0).toFixed(2)}%`],
-          ['Account Maintenance Margin', `${money(mg.account_maintenance_margin)} USDT`],
+        const html = [
+          ['Perp Total Value', `${money(eq.perp_total_value)} USDT`],
+          ['Perp Unrealized PnL', `${money(eq.perp_unrealized_pnl)} USDT`],
+          ['Margin Ratio', `${Number(mg.account_margin_ratio_pct || 0).toFixed(2)}%`],
           ['Account Equity', `${money(mg.account_equity)} USDT`],
           ['Wallet Balance', `${money(mg.wallet_balance)} USDT`],
           ['Available Balance', `${money(mg.available_balance)} USDT`],
-        ].map((r) => `<div class="acct-row"><span>${r[0]}</span><strong>${r[1]}</strong></div>`).join('');
+        ].map((r) => `<div style="display:flex;justify-content:space-between;padding:6px 0;border-bottom:1px solid #242424"><span class="muted">${r[0]}</span><strong>${r[1]}</strong></div>`).join('');
+        document.getElementById('account-box').innerHTML = html;
+      }
+
+      async function loadSymbols() {
+        const data = await fetchJson('/api/aster-trading/symbols');
+        const select = document.getElementById('f-symbol');
+        select.innerHTML = (data.items || []).map((s) => `<option value="${s}">${s}</option>`).join('');
+        if (data.default) select.value = data.default;
       }
 
       async function preview() {
@@ -219,114 +444,151 @@
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        document.getElementById('q-risk').textContent = `${money(p.risk_usdt)} USDT`;
-        document.getElementById('q-margin').textContent = `${money(p.margin_usdt)} USDT`;
+        document.getElementById('q-risk').textContent = `${money(p.risk_usdt, 2)} USDT`;
+        document.getElementById('q-margin').textContent = `${money(p.margin_usdt, 2)} USDT`;
         document.getElementById('q-qty').textContent = money(p.quantity, 6);
-        document.getElementById('q-mark').textContent = money(p.entry_price);
-        document.getElementById('response-box').textContent = JSON.stringify(p, null, 2);
+        document.getElementById('q-mark').textContent = money(p.mark_price || p.entry_price, 4);
+        document.getElementById('sl-note').textContent = `SL reference: entry ${money(p.entry_price, 4)} -> stop ${money(p.stop_price, 4)} (${(Number(p.stop_loss_pct || 0) * 100).toFixed(3)}%)`;
+        renderResponse(p);
       }
 
-      async function placeOrder() {
+      async function openOrder() {
         const payload = formPayload();
         const res = await fetchJson('/api/aster-trading/place-order', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        document.getElementById('response-box').textContent = JSON.stringify(res, null, 2);
-        await refreshTables();
+        renderResponse(res);
+        await refreshLivePanels();
       }
 
-      async function closePosition() {
-        const payload = { dry_run: document.getElementById('f-dryrun').value === 'true' };
+      async function closeSelectedSymbol() {
+        const payload = {
+          symbol: document.getElementById('f-symbol').value,
+          dry_run: document.getElementById('f-dryrun').value === 'true',
+        };
         const res = await fetchJson('/api/aster-trading/close-position', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
-        document.getElementById('response-box').textContent = JSON.stringify(res, null, 2);
-        await refreshTables();
+        renderResponse(res);
+        await refreshLivePanels();
       }
 
-      async function refreshTables() {
-        const [positions, orders, trades, pnl] = await Promise.all([
+      async function closeAll() {
+        const payload = { dry_run: document.getElementById('f-dryrun').value === 'true' };
+        const res = await fetchJson('/api/aster-trading/close-all-positions', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        renderResponse(res);
+        await refreshLivePanels();
+      }
+
+      async function refreshLivePanels() {
+        const selected = document.getElementById('f-symbol').value;
+        const [positions, orders] = await Promise.all([
           fetchJson('/api/aster-trading/open-positions'),
           fetchJson('/api/aster-trading/open-orders'),
-          fetchJson('/api/aster-trading/trade-history?limit=30'),
-          fetchJson('/api/aster-trading/pnl-history?limit=30'),
         ]);
+        const selectedPosCount = (positions.items || []).filter((p) => String(p.symbol || '').toUpperCase() === selected).length;
+        const selectedOrdCount = (orders.items || []).filter((o) => String(o.symbol || '').toUpperCase() === selected).length;
 
         document.getElementById('open-positions').innerHTML = tableHtml(
-          ['Side', 'Amt', 'Entry', 'Mark', 'uPnL', 'Lev'],
-          (positions.items || []).map((p) => [
-            Number(p.positionAmt || 0) >= 0 ? 'LONG' : 'SHORT',
-            money(p.positionAmt, 6),
-            money(p.entryPrice),
-            money(p.markPrice),
-            money(p.unRealizedProfit),
-            `x${p.leverage || '-'}`,
-          ]),
+          ['Symbol', 'Side', 'Amt', 'Entry', 'Mark', 'uPnL', 'Lev'],
+          (positions.items || []).map((p) => {
+            const symbol = String(p.symbol || '-').toUpperCase();
+            const side = Number(p.positionAmt || 0) >= 0 ? 'LONG' : 'SHORT';
+            return {
+              className: symbol === selected ? 'selected-row' : '',
+              cells: [
+                p.symbol || '-',
+                `<span class="side-chip ${side === 'LONG' ? 'side-long' : 'side-short'}">${side}</span>`,
+                money(p.positionAmt, 6),
+                money(p.entryPrice),
+                money(p.markPrice),
+                money(p.unRealizedProfit),
+                `x${p.leverage || '-'}`,
+              ],
+            };
+          }),
         );
+        document.getElementById('open-positions').innerHTML = `<div class="selected-chip">Selected Pair ${esc(selected)}: ${selectedPosCount} open position(s)</div>${document.getElementById('open-positions').innerHTML}`;
 
         document.getElementById('open-orders').innerHTML = tableHtml(
-          ['ID', 'Type', 'Side', 'Price', 'Qty', 'Status'],
-          (orders.items || []).slice(0, 30).map((o) => [o.orderId, o.type, o.side, money(o.price), money(o.origQty, 6), o.status]),
+          ['Symbol', 'ID', 'Type', 'Side', 'Price', 'Qty', 'Status'],
+          (orders.items || []).slice(0, 80).map((o) => {
+            const symbol = String(o.symbol || '-').toUpperCase();
+            return {
+              className: symbol === selected ? 'selected-row' : '',
+              cells: [o.symbol || '-', o.orderId, o.type, o.side, money(o.price), money(o.origQty, 6), o.status || '-'],
+            };
+          }),
         );
-
-        document.getElementById('trade-history').innerHTML = tableHtml(
-          ['Time', 'Side', 'Price', 'Qty', 'Realized PnL', 'Fee'],
-          (trades.items || []).map((t) => [
-            new Date(Number(t.time || 0)).toLocaleString(),
-            t.side,
-            money(t.price),
-            money(t.qty, 6),
-            money(t.realizedPnl),
-            money(t.commission),
-          ]),
-        );
-
-        document.getElementById('pnl-history').innerHTML = tableHtml(
-          ['Time', 'Type', 'Income', 'Asset', 'Info'],
-          (pnl.items || []).map((i) => [
-            new Date(Number(i.time || 0)).toLocaleString(),
-            i.incomeType || '-',
-            money(i.income),
-            i.asset || '-',
-            i.info || '-',
-          ]),
-        );
+        document.getElementById('open-orders').innerHTML = `<div class="selected-chip">Selected Pair ${esc(selected)}: ${selectedOrdCount} open order(s)</div>${document.getElementById('open-orders').innerHTML}`;
       }
 
       async function refreshAccount() {
-        const overview = await fetchJson('/api/aster-trading/account-overview');
-        renderAccount(overview);
-        const defaults = overview?.config?.defaults || {};
-        document.getElementById('f-leverage').value = defaults.leverage ?? 5;
-        document.getElementById('f-notional').value = defaults.position_notional_usdt ?? 400;
-        document.getElementById('f-sl').value = Number(defaults.stop_loss_pct || 0.05) * 100;
-        document.getElementById('f-tp').value = Number(defaults.take_profit_pct || 0.15) * 100;
-        document.getElementById('f-dryrun').value = defaults.dry_run ? 'true' : 'false';
+        const data = await fetchJson('/api/aster-trading/account-overview');
+        renderAccount(data);
       }
 
-      function bindTabs() {
-        document.querySelectorAll('.trade-tabs button').forEach((btn) => {
-          btn.addEventListener('click', () => {
-            document.querySelectorAll('.trade-tabs button').forEach((x) => x.classList.remove('active'));
-            btn.classList.add('active');
-            orderType = btn.dataset.type;
-          });
+      async function checkConnection() {
+        const data = await fetchJson('/api/aster-trading/connection-check');
+        const hints = Array.isArray(data.hints) ? data.hints : [];
+        const color = data.ok ? 'var(--ok)' : 'var(--danger)';
+        const lines = [
+          `<strong style="color:${color}">${data.ok ? 'Connected' : 'Not connected'}</strong>`,
+          esc(data.message || '-'),
+        ];
+        if (hints.length) {
+          lines.push(hints.map((x) => `- ${esc(x)}`).join('<br/>'));
+        }
+        document.getElementById('connection-box').innerHTML = lines.join('<br/>');
+        renderResponse(data);
+      }
+
+      document.getElementById('tab-market').addEventListener('click', () => setOrderType('MARKET'));
+      document.getElementById('tab-limit').addEventListener('click', () => setOrderType('LIMIT'));
+      document.getElementById('btn-preview').addEventListener('click', () => preview().catch((e) => renderResponse(String(e))));
+      document.getElementById('btn-open').addEventListener('click', () => openOrder().catch((e) => renderResponse(String(e))));
+      document.getElementById('btn-close-symbol').addEventListener('click', () => closeSelectedSymbol().catch((e) => renderResponse(String(e))));
+      document.getElementById('btn-close-all').addEventListener('click', () => closeAll().catch((e) => renderResponse(String(e))));
+      document.getElementById('btn-refresh-account').addEventListener('click', () => refreshAccount().catch((e) => renderResponse(String(e))));
+      document.getElementById('btn-check-connection').addEventListener('click', () => checkConnection().catch((e) => renderResponse(String(e))));
+      document.getElementById('btn-toggle-raw').addEventListener('click', () => {
+        responseRawVisible = !responseRawVisible;
+        document.getElementById('response-box').style.display = responseRawVisible ? 'block' : 'none';
+        document.getElementById('btn-toggle-raw').textContent = responseRawVisible ? 'Hide Raw JSON' : 'Show Raw JSON';
+      });
+
+      let previewTimer = null;
+      function schedulePreview() {
+        if (previewTimer) clearTimeout(previewTimer);
+        previewTimer = setTimeout(() => preview().catch((e) => renderResponse(String(e))), 220);
+      }
+
+      ['f-symbol', 'f-side', 'f-price', 'f-margin', 'f-leverage', 'f-sl', 'f-tp', 'f-auto-1pct', 'f-enable-tpsl', 'f-dryrun'].forEach((id) => {
+        const el = document.getElementById(id);
+        if (!el) return;
+        const eventName = el.tagName === 'INPUT' ? 'input' : 'change';
+        el.addEventListener(eventName, () => {
+          schedulePreview();
+          if (id === 'f-symbol') {
+            refreshLivePanels().catch((e) => renderResponse(String(e)));
+          }
         });
-      }
+      });
 
-      document.getElementById('btn-preview').addEventListener('click', () => preview().catch((e) => (document.getElementById('response-box').textContent = String(e))));
-      document.getElementById('btn-open').addEventListener('click', () => placeOrder().catch((e) => (document.getElementById('response-box').textContent = String(e))));
-      document.getElementById('btn-close').addEventListener('click', () => closePosition().catch((e) => (document.getElementById('response-box').textContent = String(e))));
-
-      bindTabs();
-      refreshAccount().then(preview).catch((e) => (document.getElementById('response-box').textContent = String(e)));
-      refreshTables().catch((e) => (document.getElementById('response-box').textContent = String(e)));
-      setInterval(() => refreshAccount().catch(() => {}), 6000);
-      setInterval(() => refreshTables().catch(() => {}), 6000);
+      setOrderType('MARKET');
+      loadSymbols()
+        .then(() => Promise.all([preview(), refreshLivePanels()]))
+        .then(() => Promise.allSettled([checkConnection(), refreshAccount()]))
+        .catch((e) => renderResponse(String(e)));
+      setInterval(() => refreshLivePanels().catch(() => {}), 3000);
     </script>
     <script src="/static/theme.js"></script>
   </body>

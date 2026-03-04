@@ -18,6 +18,7 @@
           <a href="/strategy-summary">Tóm tắt Strategy</a>
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
+          <a href="/aster-simple-trading">AsterSimpleTrading</a>
           <a href="/chatlog">ChatLog</a>
         </div>
       </header>
@@ -113,6 +114,21 @@
             <button id="btn-close-all-strategy" class="btn" style="background:#f7c948; color:#111827; border-color:#f7c948;">Close All Strategy Positions</button>
           </div>
         </div>
+
+        <div class="card">
+          <h2>CLOSE UNKNOWN POSITION</h2>
+          <p class="muted">Unknown positions are open on account but not mapped to Strategy/Manual ownership. Manage them here.</p>
+          <div class="kv-list" style="margin-top:10px;">
+            <div class="kv-row">
+              <span>Unknown Position</span>
+              <select id="unknown-close-position" style="max-width:300px;"></select>
+            </div>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+            <button id="btn-close-unknown" class="btn btn-danger">Close Unknown Position</button>
+            <button id="btn-close-all-unknown" class="btn" style="background:#ef6b6b; color:#111827; border-color:#ef6b6b;">Close All Unknown Positions</button>
+          </div>
+        </div>
       </section>
 
       <section class="grid">
@@ -122,6 +138,8 @@
           <div id="positions-strategy">Loading...</div>
           <p class="muted" style="margin-top: 10px;">Manual Position</p>
           <div id="positions-manual">Loading...</div>
+          <p class="muted" style="margin-top: 10px;">Unknown Position</p>
+          <div id="positions-unknown">Loading...</div>
         </div>
         <div class="card">
           <h2>Action Result</h2>
@@ -276,6 +294,7 @@
         const manualPositions = Array.isArray(data.manual_positions) && data.manual_positions.length
           ? data.manual_positions
           : (data.manual_position ? [data.manual_position] : []);
+        const unknownPositions = Array.isArray(data.unknown_positions) ? data.unknown_positions : [];
         const strategyState = status.strategy_state || 'running';
         const modeLabel = String(status?.strategy?.mode || 'single').toLowerCase() === 'all'
           ? `ALL (${(status?.strategy?.enabled_ids || []).length} strategies)`
@@ -327,6 +346,28 @@
             tsMs(manual.openedAt),
           ]),
         );
+        renderTable(
+          document.getElementById('positions-unknown'),
+          ['Coin', 'Side', 'Entry', 'Current', 'StopLoss', 'TP Price', 'Margin', 'Size', 'uPnL', 'Opened'],
+          unknownPositions.map((unknown) => [
+            unknown.coin || '-',
+            unknown.side || '-',
+            money(unknown.entryPrice),
+            money(unknown.currentPrice),
+            unknown.stopLoss ? money(unknown.stopLoss) : '-',
+            unknown.takeProfit ? money(unknown.takeProfit) : '-',
+            (() => {
+              const margin = resolveMargin(unknown, status?.strategy?.leverage || 0);
+              return margin > 0 ? `${money(margin)} BOKS` : '-';
+            })(),
+            (() => {
+              const size = resolveSize(unknown, status?.strategy?.leverage || 0);
+              return size > 0 ? `${money(size)} BOKS` : '-';
+            })(),
+            `${Number(unknown.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(unknown.unrealizedPnl)} BOKS`,
+            tsMs(unknown.openedAt),
+          ]),
+        );
 
         const selector = document.getElementById('manual-close-position');
         selector.innerHTML = '';
@@ -362,6 +403,22 @@
                 return v > 0 ? money(v) : '-';
               })();
               return `<option value="${pid}">${pid} | ${coin} | entry ${entry} | margin ${margin}</option>`;
+            })
+            .join('');
+        }
+
+        const unknownSelector = document.getElementById('unknown-close-position');
+        unknownSelector.innerHTML = '';
+        if (!unknownPositions.length) {
+          unknownSelector.innerHTML = '<option value="">No unknown positions</option>';
+        } else {
+          unknownSelector.innerHTML = unknownPositions
+            .map((p) => {
+              const pid = p.positionId || '';
+              const coin = p.coin || '-';
+              const entry = money(p.entryPrice);
+              const upnl = `${Number(p.unrealizedPnl || 0) >= 0 ? '+' : ''}${money(p.unrealizedPnl)} BOKS`;
+              return `<option value="${pid}">${pid} | ${coin} | entry ${entry} | uPnL ${upnl}</option>`;
             })
             .join('');
         }
@@ -586,6 +643,49 @@
         }
       }
 
+      async function closeUnknownPosition() {
+        const positionId = document.getElementById('unknown-close-position').value || '';
+        if (!positionId) {
+          renderResult({ success: false, message: 'Please select unknown position first.' }, true);
+          return;
+        }
+        if (!confirm(`Close unknown position ${positionId}?`)) return;
+        const btn = document.getElementById('btn-close-unknown');
+        btn.disabled = true;
+        btn.textContent = 'Closing Unknown...';
+        try {
+          const data = await fetchJson('/api/manual/close-unknown-position', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify({ position_id: positionId }),
+          });
+          renderResult(data, !data.success);
+          await refreshPositions();
+        } catch (e) {
+          renderResult({ success: false, message: String(e) }, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Close Unknown Position';
+        }
+      }
+
+      async function closeAllUnknownPositions() {
+        if (!confirm('Close ALL unknown positions?')) return;
+        const btn = document.getElementById('btn-close-all-unknown');
+        btn.disabled = true;
+        btn.textContent = 'Closing All Unknown...';
+        try {
+          const data = await fetchJson('/api/manual/close-all-unknown-positions', { method: 'POST' });
+          renderResult(data, !data.success);
+          await refreshPositions();
+        } catch (e) {
+          renderResult({ success: false, message: String(e) }, true);
+        } finally {
+          btn.disabled = false;
+          btn.textContent = 'Close All Unknown Positions';
+        }
+      }
+
       async function pauseStrategy() {
         const btn = document.getElementById('btn-pause');
         btn.disabled = true;
@@ -624,6 +724,8 @@
       document.getElementById('btn-close-all-manual').addEventListener('click', closeAllManualPositions);
       document.getElementById('btn-close-strategy').addEventListener('click', closeStrategyPosition);
       document.getElementById('btn-close-all-strategy').addEventListener('click', closeAllStrategyPositions);
+      document.getElementById('btn-close-unknown').addEventListener('click', closeUnknownPosition);
+      document.getElementById('btn-close-all-unknown').addEventListener('click', closeAllUnknownPositions);
       document.getElementById('btn-pause').addEventListener('click', pauseStrategy);
       document.getElementById('btn-resume').addEventListener('click', resumeStrategy);
       document.getElementById('btn-save-settings').addEventListener('click', saveSettings);

@@ -104,12 +104,18 @@ class AsterTradeClient:
         data = self._request("GET", "/fapi/v2/balance", signed=True)
         return data if isinstance(data, list) else []
 
-    def get_positions(self, symbol: str) -> List[Dict[str, Any]]:
-        data = self._request("GET", "/fapi/v2/positionRisk", params={"symbol": symbol}, signed=True)
+    def get_positions(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {}
+        if symbol:
+            params["symbol"] = symbol
+        data = self._request("GET", "/fapi/v2/positionRisk", params=params, signed=True)
         return data if isinstance(data, list) else []
 
-    def get_open_orders(self, symbol: str) -> List[Dict[str, Any]]:
-        data = self._request("GET", "/fapi/v1/openOrders", params={"symbol": symbol}, signed=True)
+    def get_open_orders(self, symbol: Optional[str] = None) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {}
+        if symbol:
+            params["symbol"] = symbol
+        data = self._request("GET", "/fapi/v1/openOrders", params=params, signed=True)
         return data if isinstance(data, list) else []
 
     def get_all_orders(self, symbol: str, limit: int = 100) -> List[Dict[str, Any]]:

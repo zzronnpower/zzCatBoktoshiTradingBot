@@ -1314,6 +1314,213 @@ class BotRunner:
             "items": positions,
         }
 
+    def close_unknown_position(self, position_id: str = "", comment: str = "Manual close unknown position") -> Dict[str, Any]:
+        now = int(time.time())
+        if not self.client.api_key:
+            return {"success": False, "message": "MTC_API_KEY is missing."}
+
+        positions = self._fetch_positions(now)
+        self._sync_owned_position_ids(now, positions)
+        grouped = self.classify_open_positions(positions)
+        unknown_positions = grouped.get("unknown_positions", []) if isinstance(grouped, dict) else []
+
+        selected_id = str(position_id or "").strip()
+        if not selected_id:
+            return {"success": False, "message": "Please select unknown position to close."}
+
+        target = self._find_position_by_id(unknown_positions, selected_id)
+        if not target:
+            return {"success": False, "message": "Selected position is not an unknown open position."}
+
+        resolved_position_id = str(target.get("positionId", "")).strip()
+        if not resolved_position_id:
+            return {"success": False, "message": "Unknown position id is invalid."}
+
+        position_coin = str(target.get("coin", "")).upper() or "UNKNOWN"
+        position_side = str(target.get("side", "")).upper() or "UNKNOWN"
+        close_snapshot = self._compact_position_snapshot(target)
+
+        if self.dry_run:
+            add_trade(
+                self.db_path,
+                now,
+                "CLOSE",
+                position_coin,
+                position_side,
+                self.margin_boks,
+                self.leverage,
+                "DRY_RUN",
+                json.dumps(
+                    {
+                        "message": f"unknown close {resolved_position_id}",
+                        "positionId": resolved_position_id,
+                        "source": "unknown",
+                        "close_mode": "manual_unknown",
+                        "comment": comment,
+                        "close_snapshot": close_snapshot,
+                    }
+                ),
+            )
+            self._log_structured(
+                now,
+                "INFO",
+                "unknown_close_dry_run",
+                position_id=resolved_position_id,
+                external_id=self._close_external_id(resolved_position_id),
+            )
+            return {
+                "success": True,
+                "dry_run": True,
+                "message": "DRY_RUN enabled. Simulated unknown position close.",
+                "closed": 1,
+                "position_id": resolved_position_id,
+            }
+
+        if not self._can_send_trade(now):
+            return {"success": False, "message": "Rate limit guard blocked this request."}
+
+        try:
+            response = self.client.close_trade({"positionId": resolved_position_id, "comment": comment})
+            add_trade(
+                self.db_path,
+                now,
+                "CLOSE",
+                position_coin,
+                position_side,
+                self.margin_boks,
+                self.leverage,
+                "OK",
+                json.dumps(
+                    {
+                        **(response if isinstance(response, dict) else {}),
+                        "positionId": resolved_position_id,
+                        "source": "unknown",
+                        "close_mode": "manual_unknown",
+                        "close_snapshot": close_snapshot,
+                    }
+                ),
+            )
+            self._log_structured(
+                now,
+                "INFO",
+                "unknown_close_submitted",
+                position_id=resolved_position_id,
+                external_id=self._close_external_id(resolved_position_id),
+            )
+            return {"success": True, "closed": 1, "message": "Closed unknown position.", "position_id": resolved_position_id}
+        except MTCClientError as exc:
+            self._log_structured(
+                now,
+                "ERROR",
+                "unknown_close_failed",
+                position_id=resolved_position_id,
+                error=str(exc),
+                error_code=exc.code,
+            )
+            return {"success": False, "message": f"Close failed: {exc}", "code": exc.code}
+
+    def close_all_unknown_positions(self, comment: str = "Manual close all unknown positions") -> Dict[str, Any]:
+        now = int(time.time())
+        if not self.client.api_key:
+            return {"success": False, "message": "MTC_API_KEY is missing."}
+
+        positions = self._fetch_positions(now)
+        self._sync_owned_position_ids(now, positions)
+        grouped = self.classify_open_positions(positions)
+        targets = grouped.get("unknown_positions", []) if isinstance(grouped, dict) else []
+        if not targets:
+            return {"success": True, "closed": 0, "message": "No open unknown positions."}
+
+        closed_ids: List[str] = []
+        errors: List[str] = []
+
+        for target in targets:
+            resolved_position_id = str(target.get("positionId", "")).strip()
+            if not resolved_position_id:
+                continue
+            position_coin = str(target.get("coin", "")).upper() or "UNKNOWN"
+            position_side = str(target.get("side", "")).upper() or "UNKNOWN"
+            close_snapshot = self._compact_position_snapshot(target)
+
+            if self.dry_run:
+                add_trade(
+                    self.db_path,
+                    now,
+                    "CLOSE",
+                    position_coin,
+                    position_side,
+                    self.margin_boks,
+                    self.leverage,
+                    "DRY_RUN",
+                    json.dumps(
+                        {
+                            "message": f"unknown close {resolved_position_id}",
+                            "positionId": resolved_position_id,
+                            "source": "unknown",
+                            "close_mode": "manual_unknown_all",
+                            "comment": comment,
+                            "close_snapshot": close_snapshot,
+                        }
+                    ),
+                )
+                closed_ids.append(resolved_position_id)
+                continue
+
+            if not self._can_send_trade(now):
+                errors.append(f"{resolved_position_id}: rate limit guard blocked this request")
+                continue
+
+            try:
+                response = self.client.close_trade({"positionId": resolved_position_id, "comment": comment})
+                add_trade(
+                    self.db_path,
+                    now,
+                    "CLOSE",
+                    position_coin,
+                    position_side,
+                    self.margin_boks,
+                    self.leverage,
+                    "OK",
+                    json.dumps(
+                        {
+                            **(response if isinstance(response, dict) else {}),
+                            "positionId": resolved_position_id,
+                            "source": "unknown",
+                            "close_mode": "manual_unknown_all",
+                            "close_snapshot": close_snapshot,
+                        }
+                    ),
+                )
+                closed_ids.append(resolved_position_id)
+            except MTCClientError as exc:
+                errors.append(f"{resolved_position_id}: {exc} ({exc.code})")
+
+        if self.dry_run:
+            self._log_structured(now, "INFO", "unknown_close_all_dry_run", closed_count=len(closed_ids), closed_ids=closed_ids)
+        elif closed_ids:
+            self._log_structured(now, "INFO", "unknown_close_all_submitted", closed_count=len(closed_ids), closed_ids=closed_ids)
+
+        if errors:
+            self._log_structured(now, "WARN", "unknown_close_all_partial_failures", failed_count=len(errors), errors=errors)
+
+        success = len(errors) == 0
+        message = (
+            f"Closed {len(closed_ids)} unknown positions."
+            if success
+            else f"Closed {len(closed_ids)} unknown positions, {len(errors)} failed."
+        )
+        result = {
+            "success": success,
+            "closed": len(closed_ids),
+            "failed": len(errors),
+            "closed_ids": closed_ids,
+            "errors": errors,
+            "message": message,
+        }
+        if self.dry_run:
+            result["dry_run"] = True
+        return result
+
     def _manage_open_positions(self, now: int, account: Dict[str, Any], positions: List[Dict[str, Any]]) -> None:
         strategy_id = self._get_owner_position_id("strategy")
         strategy_pos = self._find_position_by_id(positions, strategy_id)

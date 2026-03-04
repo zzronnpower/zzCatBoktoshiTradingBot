@@ -1254,6 +1254,11 @@ def aster_trading_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("aster_trading.html", {"request": request})
 
 
+@app.get("/aster-simple-trading", response_class=HTMLResponse)
+def aster_simple_trading_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("aster_simple_trading.html", {"request": request})
+
+
 @app.get("/eth-chart", response_class=HTMLResponse)
 def eth_chart_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("eth_chart.html", {"request": request})
@@ -1578,6 +1583,20 @@ def close_all_strategy_positions() -> Dict[str, Any]:
     return runner.close_all_strategy_positions(comment="The SuperBOT of zzCatzz has exited the ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ ﾏﾄﾘｯｸｽ!")
 
 
+@app.post("/api/manual/close-unknown-position")
+def close_unknown_position(payload: Dict[str, Any] = Body(default={})) -> Dict[str, Any]:  # type: ignore[valid-type]
+    position_id = str(payload.get("position_id", "") or "")
+    return runner.close_unknown_position(
+        position_id=position_id,
+        comment="The SuperBOT of zzCatzz has exited the unknown matrix position!",
+    )
+
+
+@app.post("/api/manual/close-all-unknown-positions")
+def close_all_unknown_positions() -> Dict[str, Any]:
+    return runner.close_all_unknown_positions(comment="The SuperBOT of zzCatzz has exited all unknown matrix positions!")
+
+
 @app.post("/api/bot/pause")
 def pause_bot_strategy() -> Dict[str, Any]:
     return runner.pause_strategy()
@@ -1761,6 +1780,22 @@ def aster_trading_account_overview() -> Dict[str, Any]:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
+@app.get("/api/aster-trading/symbols")
+def aster_trading_symbols() -> Dict[str, Any]:
+    try:
+        return aster_trading.get_symbols()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/aster-trading/connection-check")
+def aster_trading_connection_check() -> Dict[str, Any]:
+    try:
+        return aster_trading.get_connection_status()
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
 @app.post("/api/aster-trading/order-preview")
 def aster_trading_order_preview(payload: Dict[str, Any] = Body(default={})):  # type: ignore[valid-type]
     try:
@@ -1785,33 +1820,41 @@ def aster_trading_close_position(payload: Dict[str, Any] = Body(default={})):  #
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
-@app.get("/api/aster-trading/open-positions")
-def aster_trading_open_positions() -> Dict[str, Any]:
+@app.post("/api/aster-trading/close-all-positions")
+def aster_trading_close_all_positions(payload: Dict[str, Any] = Body(default={})):  # type: ignore[valid-type]
     try:
-        return aster_trading.get_open_positions()
+        return aster_trading.close_all_positions(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
+@app.get("/api/aster-trading/open-positions")
+def aster_trading_open_positions(symbol: str = "") -> Dict[str, Any]:
+    try:
+        return aster_trading.get_open_positions(symbol=symbol or None)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/api/aster-trading/open-orders")
-def aster_trading_open_orders() -> Dict[str, Any]:
+def aster_trading_open_orders(symbol: str = "") -> Dict[str, Any]:
     try:
-        return aster_trading.get_open_orders()
+        return aster_trading.get_open_orders(symbol=symbol or None)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/api/aster-trading/trade-history")
-def aster_trading_trade_history(limit: int = 100) -> Dict[str, Any]:
+def aster_trading_trade_history(limit: int = 100, symbol: str = "") -> Dict[str, Any]:
     try:
-        return aster_trading.get_trade_history(limit=limit)
+        return aster_trading.get_trade_history(limit=limit, symbol=symbol or None)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc
 
 
 @app.get("/api/aster-trading/pnl-history")
-def aster_trading_pnl_history(limit: int = 100) -> Dict[str, Any]:
+def aster_trading_pnl_history(limit: int = 100, symbol: str = "") -> Dict[str, Any]:
     try:
-        return aster_trading.get_income_history(limit=limit)
+        return aster_trading.get_income_history(limit=limit, symbol=symbol or None)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

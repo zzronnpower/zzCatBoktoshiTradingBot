@@ -24,6 +24,7 @@ Trading bot for Boktoshi MechaTradeClub using Hyperliquid OHLC data.
 - Logs
 - ASTER Chart tab (ASTER-only market data)
 - AsterTrading tab (ASTER futures manual trading)
+- AsterSimpleTrading tab (quick open/close futures positions)
 
 ## Quick Start (Docker)
 
@@ -64,9 +65,12 @@ uvicorn app.main:app --host 0.0.0.0 --port 8000
 - `/api/aster/depth`
 - `/api/aster/symbols`
 - `/api/aster-trading/account-overview`
+- `/api/aster-trading/symbols`
+- `/api/aster-trading/connection-check`
 - `/api/aster-trading/order-preview`
 - `/api/aster-trading/place-order`
 - `/api/aster-trading/close-position`
+- `/api/aster-trading/close-all-positions`
 - `/api/aster-trading/open-positions`
 - `/api/aster-trading/open-orders`
 - `/api/aster-trading/trade-history`

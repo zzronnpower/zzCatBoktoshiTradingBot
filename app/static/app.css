@@ -99,6 +99,40 @@ body.theme-light-green {
   --dropdown-option-hover: #67ac7d;
 }
 
+html[data-theme="aster"],
+body.theme-aster {
+  --bg: #111214;
+  --panel: #17191d;
+  --panel-soft: #1b1e23;
+  --muted: #9da6b2;
+  --text: #e6e9ee;
+  --accent: #d8b97a;
+  --danger: #e07d6d;
+  --success: #79cdb9;
+  --line: #2b3038;
+  --bg-glow-1: #22252b;
+  --bg-glow-2: #1b1f25;
+  --bg-grad-1: #111214;
+  --bg-grad-2: #0f1114;
+  --chart-card-1: #1a1d22;
+  --chart-card-2: #16191d;
+  --chart-select-1: #21252d;
+  --chart-select-2: #1a1e25;
+  --chart-select-option: #2c313a;
+  --chart-grid: rgba(255, 255, 255, 0.08);
+  --chart-bg: #121418;
+  --chart-up: #79cdb9;
+  --chart-down: #e08d7b;
+  --input-bg: #1d2128;
+  --input-text: #e8ebf0;
+  --button-text: #0d1014;
+  --dropdown-bg: #20242b;
+  --dropdown-text: #ebeff5;
+  --dropdown-option-bg: #262a32;
+  --dropdown-option-text: #ebeff5;
+  --dropdown-option-hover: #303641;
+}
+
 * {
   box-sizing: border-box;
 }
@@ -110,6 +144,36 @@ body {
     radial-gradient(circle at 90% -20%, var(--bg-glow-2) 0%, transparent 30%),
     linear-gradient(160deg, var(--bg-grad-1) 0%, var(--bg-grad-2) 100%);
   color: var(--text);
+}
+
+html[data-theme="aster"] body,
+body.theme-aster {
+  font-family: "IBM Plex Sans", "Avenir Next", "Segoe UI", sans-serif;
+  letter-spacing: 0.1px;
+}
+
+html[data-theme="aster"] .header h1,
+body.theme-aster .header h1 {
+  font-size: 40px;
+  letter-spacing: 0.15px;
+}
+
+html[data-theme="aster"] .header p,
+body.theme-aster .header p {
+  font-size: 20px;
+  margin-bottom: 20px;
+}
+
+html[data-theme="aster"] .card,
+body.theme-aster .card {
+  border-radius: 10px;
+  box-shadow: 0 12px 28px rgba(0, 0, 0, 0.35);
+}
+
+html[data-theme="aster"] .nav-links a,
+body.theme-aster .nav-links a {
+  border-radius: 8px;
+  padding: 7px 11px;
 }
 
 .page {

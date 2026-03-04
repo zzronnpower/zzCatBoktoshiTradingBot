@@ -385,6 +385,59 @@ def test_close_all_strategy_positions_closes_all_strategy_owned(tmp_path, monkey
     assert runner._get_strategy_position_map() == {}
 
 
+def test_close_unknown_position_closes_only_unknown_owned(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+    runner._set_strategy_position_map({f"{runner.STRATEGY_MA50}:ETHUSDT": "s1"})
+    runner._set_manual_position_ids(["m1"])
+
+    positions = [
+        {"positionId": "s1", "coin": "ETH", "side": "LONG", "openedAt": 1001},
+        {"positionId": "m1", "coin": "BTC", "side": "LONG", "openedAt": 1002},
+        {"positionId": "u1", "coin": "DOGE", "side": "LONG", "openedAt": 1003},
+    ]
+    close_calls = []
+
+    monkeypatch.setattr(runner, "_fetch_positions", lambda now: positions)
+    monkeypatch.setattr(runner, "_sync_owned_position_ids", lambda now, pos: None)
+    monkeypatch.setattr(runner, "_can_send_trade", lambda now: True)
+    monkeypatch.setattr(runner.client, "close_trade", lambda payload: close_calls.append(payload) or {"ok": True})
+
+    reject = runner.close_unknown_position(position_id="m1", comment="reject")
+    assert reject["success"] is False
+    assert "not an unknown" in reject["message"]
+
+    result = runner.close_unknown_position(position_id="u1", comment="close unknown")
+    assert result["success"] is True
+    assert result["closed"] == 1
+    assert len(close_calls) == 1
+    assert close_calls[0]["positionId"] == "u1"
+
+
+def test_close_all_unknown_positions_closes_all_unknown_only(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+    runner._set_strategy_position_map({f"{runner.STRATEGY_MA50}:ETHUSDT": "s1"})
+    runner._set_manual_position_ids(["m1"])
+
+    positions = [
+        {"positionId": "s1", "coin": "ETH", "side": "LONG", "openedAt": 1001},
+        {"positionId": "m1", "coin": "BTC", "side": "LONG", "openedAt": 1002},
+        {"positionId": "u1", "coin": "DOGE", "side": "LONG", "openedAt": 1003},
+        {"positionId": "u2", "coin": "SOL", "side": "SHORT", "openedAt": 1004},
+    ]
+    close_calls = []
+
+    monkeypatch.setattr(runner, "_fetch_positions", lambda now: positions)
+    monkeypatch.setattr(runner, "_sync_owned_position_ids", lambda now, pos: None)
+    monkeypatch.setattr(runner, "_can_send_trade", lambda now: True)
+    monkeypatch.setattr(runner.client, "close_trade", lambda payload: close_calls.append(payload) or {"ok": True})
+
+    result = runner.close_all_unknown_positions(comment="close all unknown")
+    assert result["success"] is True
+    assert result["closed"] == 2
+    assert len(close_calls) == 2
+    assert {c["positionId"] for c in close_calls} == {"u1", "u2"}
+
+
 def test_regime_strategy_is_listed_and_selectable(tmp_path):
     runner = make_runner(tmp_path)
 

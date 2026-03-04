@@ -1,6 +1,6 @@
 (function () {
   const STORAGE_KEY = "zzcat_theme";
-  const THEMES = ["default", "pinky", "light-green"];
+  const THEMES = ["default", "pinky", "light-green", "aster"];
 
   function syncBodyThemeClass(theme) {
     if (!document.body) return;
@@ -32,7 +32,7 @@
     const wrap = document.createElement("div");
     wrap.id = "theme-dock";
     wrap.className = "theme-dock";
-    wrap.innerHTML = '<label for="theme-select">Theme</label><select id="theme-select"><option value="default">Default</option><option value="pinky">Pinky</option><option value="light-green">Light Green</option></select>';
+    wrap.innerHTML = '<label for="theme-select">Theme</label><select id="theme-select"><option value="default">Default</option><option value="aster">Aster</option><option value="pinky">Pinky</option><option value="light-green">Light Green</option></select>';
     document.body.appendChild(wrap);
     const select = document.getElementById("theme-select");
     select.value = currentTheme();

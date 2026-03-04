@@ -1,0 +1,10 @@
+MANUAL_ALLOWED_SYMBOLS = [
+    "BTCUSDT",
+    "ETHUSDT",
+    "SOLUSDT",
+    "TAOUSDT",
+    "XRPUSDT",
+    "HYPEUSDT",
+    "PUMPUSDT",
+    "DOGEUSDT",
+]

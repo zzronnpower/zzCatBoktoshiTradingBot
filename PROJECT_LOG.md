@@ -1504,3 +1504,251 @@ When a new assistant session starts:
   - `test_manual_force_open_long_rejects_if_manual_short_same_symbol_exists` now asserts hedge-disabled message.
   - added `test_manual_force_open_long_allows_multiple_same_symbol_same_side`.
   - added `test_manual_force_open_uses_per_order_settings_override`.
+
+## 72) AsterTrading split-plan execution + AsterSimpleTrading rollout (2026-03-04)
+
+- Aster module structure expanded for isolated ASTER scope:
+  - added `AsterTradingModule/pairs.py` (shared whitelist pairs aligned with Manual symbols).
+  - added dedicated ASTER docs/tracker files:
+    - `AsterTradingModule/ROADMAP.md`
+    - `AsterTradingModule/CHECKLIST.md`
+- `AsterTradingModule/service.py` was upgraded for multi-symbol ASTER operations:
+  - symbol is now resolved from payload/query (not fixed ETH-only at service level).
+  - supports pair dropdown flow with whitelist validation.
+  - preview now supports margin-first input (`margin_usdt * leverage`) and auto `1%` stop-loss mode from account equity.
+  - added close-all positions capability for fast emergency/manual flatten.
+  - open positions/open orders endpoints now support full-list mode (`ALL`) for cross-page sync.
+- API layer updates in `app/main.py`:
+  - added page route: `GET /aster-simple-trading`.
+  - added endpoint: `GET /api/aster-trading/symbols`.
+  - added endpoint: `POST /api/aster-trading/close-all-positions`.
+  - updated existing ASTER endpoints to accept optional `symbol` query where relevant.
+- `AsterTrading` UI (`app/templates/aster_trading.html`) fully refactored toward ASTER-like dark layout:
+  - removed `Stop Limit` tab.
+  - removed `Time in force` field.
+  - pair is now a dropdown from backend symbol list.
+  - order mode now switches `Market` vs `Limit` behavior explicitly.
+  - added `1% Stoploss` auto toggle + SL reference note.
+  - account panel switched to manual refresh only.
+  - open positions/open orders kept realtime with 3s refresh.
+- New page `AsterSimpleTrading` (`app/templates/aster_simple_trading.html`):
+  - `Position Settings` card (rename from bot settings concept for this page scope).
+  - quick open LONG/SHORT panel.
+  - close controls include both:
+    - `Close Selected Symbol`
+    - `Close All Positions`
+  - account snapshot refresh button (manual fetch only).
+  - realtime positions/orders panel (3s), shared data source with AsterTrading page.
+- Navigation updates:
+  - added `AsterSimpleTrading` nav link to primary templates (`index`, `manual`, `journal`, `strategy_summary`, `eth_chart`, `fredtrade_migration_report`, `chatlog`, and both ASTER pages).
+- ASTER service tests added:
+  - new file: `tests/test_aster_trading_service.py`
+  - covers preview sizing behavior, auto 1% stop-loss path, close-all dry-run, and open-position filtering.
+- Verification:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - `pytest -q` passed (`39 passed`).
+  - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` executed; container `CatBoktoshiTradingBot-dev` running.
+  - smoke check passed:
+    - `/aster-trading` -> 200
+  - `/aster-simple-trading` -> 200
+  - `/api/aster-trading/symbols` -> 200
+
+## 73) AsterTrading test-hardening pass complete (2026-03-04)
+
+- Continued Phase 5 hardening for ASTER scope with additional automated coverage.
+- Added API-level regression tests:
+  - new file `tests/test_aster_trading_api.py`
+  - validates:
+    - symbols endpoint payload contract (`/api/aster-trading/symbols`)
+    - close-all endpoint behavior path (`/api/aster-trading/close-all-positions`)
+    - symbol passthrough for open positions/open orders/history endpoints.
+- Added UI contract tests for ASTER pages:
+  - new file `tests/test_aster_trading_templates.py`
+  - validates:
+    - `AsterTrading` template no longer contains `Stop Limit` and `Time In Force` controls.
+    - `1% Stoploss` auto control + SL reference section are present.
+    - `AsterSimpleTrading` template contains quick close actions and `Position Settings` block.
+- Updated ASTER trackers:
+  - `AsterTradingModule/CHECKLIST.md` marks API/UI test items completed.
+  - `AsterTradingModule/ROADMAP.md` marks Phase 5 API/UI test items completed.
+- Verification:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - `pytest -q` passed (`47 passed`).
+  - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` run; container stays running.
+  - smoke checks:
+    - `/aster-trading` -> 200
+    - `/aster-simple-trading` -> 200
+    - `/api/aster-trading/symbols` -> 200
+
+## 74) Aster operator UX pass: readable response + pair-reactive overview + simple MARKET-only (2026-03-04)
+
+- `AsterTrading` UX refinements in `app/templates/aster_trading.html`:
+  - `Latest Response` now has human-readable summary rows (status, pair, side/type, entry/mark, qty/notional, margin/risk, SL/TP, warnings/message).
+  - added raw debug toggle button (`Show Raw JSON` / `Hide Raw JSON`) without losing operator-friendly view.
+  - fixed reactive behavior on pair/form changes:
+    - preview + quick stat boxes auto-refresh with debounce.
+    - symbol change immediately refreshes live panel context.
+  - live panel now keeps **overview all pairs** and highlights rows for selected pair.
+  - added selected-pair counters for both open positions and open orders.
+- `AsterSimpleTrading` simplification in `app/templates/aster_simple_trading.html`:
+  - removed `Order Type` and `Limit Price` controls.
+  - quick open flow is now fixed `MARKET` by design.
+  - added inline note clarifying `1% Stoploss Auto` uses 1% of account equity as risk target.
+- Test updates:
+  - `tests/test_aster_trading_templates.py` extended to verify:
+    - structured response controls exist,
+    - selected-row highlight support exists,
+    - simple page no longer includes `Order Type` and `Limit Price` controls.
+- Validation:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - `pytest -q -rA` passed (all tests green).
+  - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` run; dev container stays running.
+  - smoke checks passed:
+    - `/aster-trading` -> 200
+    - `/aster-simple-trading` -> 200
+    - `/api/aster-trading/open-positions` -> 200
+    - `/api/aster-trading/open-orders` -> 200
+
+## 75) Aster auth diagnostics + actionable API error hints (2026-03-04)
+
+- Added auth diagnostics support for ASTER connectivity:
+  - `AsterTradingModule/service.py`
+    - new method `get_connection_status()` performs signed account check and returns structured status.
+    - maps common auth failures (invalid key / missing futures permission / IP whitelist) into operator hints.
+  - `app/main.py`
+    - new endpoint `GET /api/aster-trading/connection-check`.
+- Updated `AsterTrading` UI (`app/templates/aster_trading.html`):
+  - added `Check API Auth` button in Account panel.
+  - added `connection-box` status area to display success/failure and troubleshooting hints.
+  - response summary now adds explicit hint row when API error message includes key/permission issues.
+- API smoke in current environment:
+  - `/api/aster-trading/connection-check` returned `ok: true`.
+  - `/api/aster-trading/account-overview` returned 200.
+  - note: if operator sees `Invalid API-key, IP, or permissions for action`, this points to exchange-side credential scope, not UI parser issue.
+- Tests/docs updates:
+  - `tests/test_aster_trading_api.py` adds coverage for connection-check endpoint.
+  - `tests/test_aster_trading_templates.py` validates `Check API Auth` control exists.
+  - `README.md` endpoint list includes `/api/aster-trading/connection-check`.
+  - ASTER trackers updated (`AsterTradingModule/ROADMAP.md`, `AsterTradingModule/CHECKLIST.md`).
+- Validation:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - `pytest -q` passed (`49 passed`).
+  - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` container restarted and running.
+  - smoke checks:
+    - `/aster-trading` -> 200
+    - `/aster-simple-trading` -> 200
+    - `/api/aster-trading/connection-check` -> 200
+
+## 76) AsterSimpleTrading Action Result parsing (2026-03-04)
+
+- Updated `app/templates/aster_simple_trading.html`:
+  - `Action Result` now mirrors operator-friendly format (structured summary rows) instead of raw JSON-only view.
+  - added `Show Raw JSON` toggle for debug mode.
+  - summary includes key fields: status, pair, side/type, entry/mark, qty/notional, margin/risk, SL/TP, warnings/message.
+- Updated UI tests:
+  - `tests/test_aster_trading_templates.py` now validates structured response controls on `AsterSimpleTrading`.
+- Verification:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - `pytest -q` passed (`49 passed`).
+  - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` confirms dev container running.
+  - smoke check `/aster-simple-trading` -> 200.
+
+## 77) Final ASTER visual polish + container recreate support (2026-03-04)
+
+- Container/env operation:
+  - executed full recreate to reload env values on request:
+    - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --force-recreate`
+  - service restarted successfully.
+- `AsterTrading` visual polish (`app/templates/aster_trading.html`):
+  - refined tabs/typography sizing for closer ASTER look.
+  - added side chips (`LONG`/`SHORT`) with color-coded style.
+  - improved selected pair row highlight with left accent border.
+  - response summary grid tuned for desktop readability.
+- `AsterSimpleTrading` visual polish (`app/templates/aster_simple_trading.html`):
+  - action-result summary now shares structured panel style and raw JSON toggle.
+  - added long/short chips and selected-row highlight in realtime tables.
+  - pair change now triggers immediate preview + realtime panel refresh.
+- Tests updated:
+  - `tests/test_aster_trading_templates.py` assertions still pass with structured controls.
+- Verification:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - `pytest -q` passed (`49 passed`).
+  - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` confirms running container.
+  - smoke checks:
+    - `/aster-trading` -> 200
+    - `/aster-simple-trading` -> 200
+    - `/api/aster-trading/connection-check` -> 200
+
+## 78) Global theme `Aster` added (default kept unchanged) (2026-03-04)
+
+- Theme engine update:
+  - `app/static/theme.js`
+    - added new theme key: `aster`.
+    - theme selector now shows: `Default`, `Aster`, `Pinky`, `Light Green`.
+  - startup fallback remains `default` (no forced switch).
+- Global style tokens update:
+  - `app/static/app.css`
+    - added `html[data-theme="aster"]` palette for darker ASTER-like look.
+    - added theme-specific typography/spacing refinements for headers/cards/nav.
+- ASTER pages wiring:
+  - `app/templates/aster_trading.html`
+  - `app/templates/aster_simple_trading.html`
+  - both pages now load `/static/theme.js` and include local `theme-dock` styling so switcher appears and works there too.
+  - both pages include local `html[data-theme="aster"]` variable overrides to preserve their custom layout while still following global theme selection.
+- Test updates:
+  - `tests/test_aster_trading_templates.py`
+    - added assertions for `/static/theme.js` usage in both ASTER pages.
+    - added assertion that `theme.js` contains `aster` option.
+- Verification:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - `pytest -q` passed (`50 passed`).
+  - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` running.
+  - smoke checks passed:
+    - `/` -> 200
+    - `/manual` -> 200
+    - `/aster-trading` -> 200
+    - `/aster-simple-trading` -> 200
+
+## 79) Unknown positions management + Aster auto-auth/account bootstrap (2026-03-04)
+
+- Root issue confirmed from operator feedback:
+  - account-level `unknown_positions` were included in Dashboard uPnL/open count,
+  - but `Position Management` only exposed Strategy/Manual owned slots, so unknown items were not manageable in UI.
+- Backend upgrades:
+  - `BoktoshiBotModule/bot_runner.py`
+    - added `close_unknown_position(position_id, comment)`.
+    - added `close_all_unknown_positions(comment)`.
+    - both flows classify unknown positions from latest `/positions` snapshot, then close by `positionId` (with DRY_RUN support, guard checks, and structured trade logs).
+  - `app/main.py`
+    - added `POST /api/manual/close-unknown-position`.
+    - added `POST /api/manual/close-all-unknown-positions`.
+- UI upgrades in `app/templates/manual.html`:
+  - new card: `CLOSE UNKNOWN POSITION`.
+  - new selector: `unknown-close-position` populated from `data.unknown_positions`.
+  - new actions:
+    - `Close Unknown Position`
+    - `Close All Unknown Positions`
+  - `Current Open Positions` now has explicit third section for Unknown Position table.
+- Aster page bootstrap change:
+  - `app/templates/aster_trading.html`
+    - on page load, run `checkConnection()` and `refreshAccount()` automatically one time after symbols/preview bootstrap.
+    - keeps manual Refresh button behavior for subsequent updates.
+- Test additions:
+  - `tests/test_bot_runner_flows.py`
+    - added unknown close single/all behavior tests.
+  - `tests/test_manual_unknown_api.py`
+    - added route passthrough tests for new manual unknown endpoints.
+  - `tests/test_manual_template_unknown.py`
+    - asserts unknown management UI controls are present.
+  - `tests/test_aster_trading_templates.py`
+    - asserts load-init includes `Promise.allSettled([checkConnection(), refreshAccount()])`.
+- Verification:
+  - `python3 -m compileall app BoktoshiBotModule tests` passed.
+  - `pytest -q` passed (`55 passed`).
+  - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` running (`CatBoktoshiTradingBot-dev`).
+  - smoke checks:
+    - `/manual` -> 200
+    - `/aster-trading` -> 200
+    - `/api/open-positions` -> 200
+    - `/api/manual/close-all-unknown-positions` -> 200
+  - note: smoke POST to `close-all-unknown-positions` executed against live data and returned closed ids for current unknown positions.

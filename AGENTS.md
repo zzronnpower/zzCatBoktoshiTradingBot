@@ -24,7 +24,7 @@
   - Strategy mode can run single strategy or all enabled strategies simultaneously.
 - Position ownership model:
   - Strategy: tracked by strategy slot map (`strategy_position_ids`) and can include multiple strategy-owned positions across supported symbols.
-  - Manual: allow up to 3 manual-owned positions from approved symbol whitelist.
+  - Manual: allow up to 5 manual-owned positions from approved symbol whitelist.
 - Default execution safety:
   - Use `DRY_RUN=true` until explicitly switched off.
   - Never remove core risk guards without user request.
@@ -60,6 +60,9 @@
   - Timeframes
   - Stats strip
   - Orderbook + spread
+- ASTER trading pages:
+  - `/aster-trading`: full manual trading panel (market/limit)
+  - `/aster-simple-trading`: quick open/close position panel
 
 ## API and Runtime Landmarks
 

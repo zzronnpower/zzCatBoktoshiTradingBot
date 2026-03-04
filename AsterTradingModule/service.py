@@ -4,6 +4,7 @@ from typing import Any, Dict, List, Optional
 
 from .client import AsterTradeClient, AsterTradeError, floor_to_step, round_to_tick
 from .config import AsterTradingConfig
+from .pairs import MANUAL_ALLOWED_SYMBOLS
 
 
 def _to_float(value: Any, default: float = 0.0) -> float:
@@ -25,16 +26,24 @@ class AsterManualTradingService:
     def __init__(self, config: Optional[AsterTradingConfig] = None) -> None:
         self.config = config or AsterTradingConfig()
         self.client = AsterTradeClient(self.config)
-        self._symbol_filters_cache: Optional[Dict[str, Any]] = None
+        self._symbol_filters_cache: Dict[str, Dict[str, Any]] = {}
 
-    def _symbol_filters(self) -> Dict[str, Any]:
-        if self._symbol_filters_cache is not None:
-            return self._symbol_filters_cache
+    def _normalize_symbol(self, symbol: Any) -> str:
+        selected = str(symbol or self.config.default_symbol).upper().strip()
+        if selected not in MANUAL_ALLOWED_SYMBOLS:
+            raise AsterTradeError(f"Unsupported symbol: {selected}")
+        return selected
+
+    def _symbol_filters(self, symbol: str) -> Dict[str, Any]:
+        cached = self._symbol_filters_cache.get(symbol)
+        if cached is not None:
+            return cached
+
         exchange_info = self.client.get_exchange_info()
         symbols = exchange_info.get("symbols", []) if isinstance(exchange_info, dict) else []
-        target = next((s for s in symbols if str(s.get("symbol", "")).upper() == self.config.symbol), None)
+        target = next((s for s in symbols if str(s.get("symbol", "")).upper() == symbol), None)
         if not isinstance(target, dict):
-            raise AsterTradeError(f"Symbol {self.config.symbol} is not available on ASTER futures.")
+            raise AsterTradeError(f"Symbol {symbol} is not available on ASTER futures.")
 
         raw_filters = target.get("filters", [])
         out = {
@@ -56,20 +65,71 @@ class AsterManualTradingService:
                 out["min_notional"] = max(out["min_notional"], _to_float(item.get("notional"), 0.0))
                 out["min_notional"] = max(out["min_notional"], _to_float(item.get("minNotional"), 0.0))
 
-        self._symbol_filters_cache = out
+        self._symbol_filters_cache[symbol] = out
         return out
 
-    def _mark_price(self) -> float:
-        premium = self.client.get_premium_index(self.config.symbol)
+    def _mark_price(self, symbol: str) -> float:
+        premium = self.client.get_premium_index(symbol)
         mark = _to_float(premium.get("markPrice"), 0.0)
         if mark <= 0:
-            raise AsterTradeError("Cannot resolve ASTER mark price for ETHUSDT.")
+            raise AsterTradeError(f"Cannot resolve ASTER mark price for {symbol}.")
         return mark
+
+    def get_symbols(self) -> Dict[str, Any]:
+        return {"items": list(MANUAL_ALLOWED_SYMBOLS), "default": self.config.default_symbol}
+
+    def get_connection_status(self) -> Dict[str, Any]:
+        has_key = bool(str(self.config.api_key or "").strip())
+        has_secret = bool(str(self.config.api_secret or "").strip())
+        if not has_key or not has_secret:
+            return {
+                "ok": False,
+                "configured": False,
+                "message": "ASTER API key/secret is missing.",
+                "hints": [
+                    "Set ASTER_API_KEY and ASTER_API_SECRET in AsterTradingModule/.env.",
+                    "Restart container after updating env values.",
+                ],
+            }
+
+        try:
+            account = self.client.get_account()
+            balances = self.client.get_balance()
+            usdt = next((b for b in balances if str(b.get("asset", "")).upper() == "USDT"), {})
+            return {
+                "ok": True,
+                "configured": True,
+                "message": "ASTER API auth is working.",
+                "wallet_balance": _to_float(usdt.get("walletBalance"), 0.0),
+                "available_balance": _to_float(usdt.get("availableBalance"), 0.0),
+                "can_read_account": isinstance(account, dict),
+            }
+        except AsterTradeError as exc:
+            hints = []
+            msg_l = str(exc).lower()
+            if "invalid api-key" in msg_l or "permissions" in msg_l or exc.code in {-2015, -2014}:
+                hints = [
+                    "Verify ASTER_API_KEY and ASTER_API_SECRET are correct.",
+                    "Enable Futures permission for this API key.",
+                    "Whitelist your server IP in ASTER API key settings.",
+                ]
+            elif exc.status_code == 429:
+                hints = ["Rate limit reached. Wait and retry."]
+            else:
+                hints = ["Check API key status and network connectivity to ASTER."]
+            return {
+                "ok": False,
+                "configured": True,
+                "message": str(exc),
+                "error_code": int(exc.code or 0),
+                "status_code": int(exc.status_code or 0),
+                "hints": hints,
+            }
 
     def get_account_overview(self) -> Dict[str, Any]:
         account = self.client.get_account()
         balances = self.client.get_balance()
-        positions = self.client.get_positions(self.config.symbol)
+        positions = self.client.get_positions(None)
 
         usdt_balance = next((b for b in balances if str(b.get("asset", "")).upper() == "USDT"), {})
         total_wallet = _to_float(account.get("totalWalletBalance"), _to_float(usdt_balance.get("walletBalance"), 0.0))
@@ -87,7 +147,8 @@ class AsterManualTradingService:
 
         return {
             "config": {
-                "symbol": self.config.symbol,
+                "default_symbol": self.config.default_symbol,
+                "allowed_symbols": list(MANUAL_ALLOWED_SYMBOLS),
                 "defaults": {
                     "leverage": self.config.leverage,
                     "position_notional_usdt": self.config.position_notional_usdt,
@@ -117,23 +178,27 @@ class AsterManualTradingService:
         }
 
     def preview_order(self, payload: Dict[str, Any]) -> Dict[str, Any]:
-        symbol = self.config.symbol
+        symbol = self._normalize_symbol(payload.get("symbol"))
         leverage = int(_to_float(payload.get("leverage"), self.config.leverage))
         leverage = max(1, min(leverage, 125))
-        notional = max(_to_float(payload.get("notional_usdt"), self.config.position_notional_usdt), 0.0)
+        margin_usdt = max(_to_float(payload.get("margin_usdt"), self.config.margin_per_trade_usdt), 0.0)
+        notional_input = _to_float(payload.get("notional_usdt"), 0.0)
+        notional = notional_input if notional_input > 0 else margin_usdt * leverage
         stop_loss_pct = max(_to_float(payload.get("stop_loss_pct"), self.config.stop_loss_pct), 0.0001)
         take_profit_pct = max(_to_float(payload.get("take_profit_pct"), self.config.take_profit_pct), 0.0)
+        auto_stoploss_1pct = _to_bool(payload.get("auto_stoploss_1pct"), False)
+
         side = str(payload.get("side", "BUY")).upper()
         if side not in {"BUY", "SELL"}:
             side = "BUY"
 
         order_type = str(payload.get("order_type", "MARKET")).upper()
-        if order_type not in {"MARKET", "LIMIT", "STOP", "STOP_MARKET", "TAKE_PROFIT", "TAKE_PROFIT_MARKET"}:
+        if order_type not in {"MARKET", "LIMIT"}:
             order_type = "MARKET"
 
-        filters = self._symbol_filters()
-        mark_price = self._mark_price()
-        entry_price = _to_float(payload.get("price"), mark_price) if order_type != "MARKET" else mark_price
+        filters = self._symbol_filters(symbol)
+        mark_price = self._mark_price(symbol)
+        entry_price = _to_float(payload.get("price"), mark_price) if order_type == "LIMIT" else mark_price
         if entry_price <= 0:
             entry_price = mark_price
 
@@ -144,9 +209,14 @@ class AsterManualTradingService:
         computed_notional = quantity * entry_price
 
         if quantity < min_qty:
-            quantity = min_qty
-            quantity = floor_to_step(quantity, str(filters.get("step_size", "0.001")))
+            quantity = floor_to_step(min_qty, str(filters.get("step_size", "0.001")))
             computed_notional = quantity * entry_price
+
+        if auto_stoploss_1pct:
+            overview = self.get_account_overview()
+            account_equity = _to_float(overview.get("margin", {}).get("account_equity"), 0.0)
+            if account_equity > 0 and computed_notional > 0:
+                stop_loss_pct = max((account_equity * 0.01) / computed_notional, 0.0001)
 
         sl_mult = 1 - stop_loss_pct if side == "BUY" else 1 + stop_loss_pct
         tp_mult = 1 + take_profit_pct if side == "BUY" else 1 - take_profit_pct
@@ -166,6 +236,7 @@ class AsterManualTradingService:
             "side": side,
             "order_type": order_type,
             "entry_price": entry_price,
+            "mark_price": mark_price,
             "leverage": leverage,
             "quantity": quantity,
             "notional_usdt": computed_notional,
@@ -175,6 +246,7 @@ class AsterManualTradingService:
             "stop_price": stop_price,
             "take_profit_price": take_profit_price,
             "risk_usdt": risk_usdt,
+            "auto_stoploss_1pct": auto_stoploss_1pct,
             "filters": filters,
             "warnings": warnings,
         }
@@ -191,32 +263,21 @@ class AsterManualTradingService:
         side = preview["side"]
         quantity = preview["quantity"]
         order_type = preview["order_type"]
-        tif = str(payload.get("time_in_force", "GTC")).upper()
-        if tif not in {"GTC", "IOC", "FOK", "GTX"}:
-            tif = "GTC"
 
         main_order: Dict[str, Any] = {
-            "symbol": self.config.symbol,
+            "symbol": preview["symbol"],
             "side": side,
             "type": order_type,
             "quantity": quantity,
             "newOrderRespType": "RESULT",
         }
-        if order_type in {"LIMIT", "STOP", "TAKE_PROFIT"}:
-            main_order["timeInForce"] = tif
+        if order_type == "LIMIT":
+            main_order["timeInForce"] = "GTC"
             main_order["price"] = preview["entry_price"]
-        if order_type in {"STOP", "STOP_MARKET", "TAKE_PROFIT", "TAKE_PROFIT_MARKET"}:
-            stop_price = _to_float(payload.get("trigger_price"), 0.0)
-            if stop_price <= 0:
-                stop_price = preview["stop_price"]
-            main_order["stopPrice"] = round_to_tick(stop_price, str(preview["filters"]["tick_size"]))
-        reduce_only = _to_bool(payload.get("reduce_only"), False)
-        if reduce_only:
-            main_order["reduceOnly"] = "true"
 
         enable_tpsl = _to_bool(payload.get("enable_tpsl"), True)
         sl_order = {
-            "symbol": self.config.symbol,
+            "symbol": preview["symbol"],
             "side": "SELL" if side == "BUY" else "BUY",
             "type": "STOP_MARKET",
             "stopPrice": preview["stop_price"],
@@ -224,7 +285,7 @@ class AsterManualTradingService:
             "workingType": "MARK_PRICE",
         }
         tp_order = {
-            "symbol": self.config.symbol,
+            "symbol": preview["symbol"],
             "side": "SELL" if side == "BUY" else "BUY",
             "type": "TAKE_PROFIT_MARKET",
             "stopPrice": preview["take_profit_price"],
@@ -239,17 +300,17 @@ class AsterManualTradingService:
                 "message": "DRY_RUN enabled. No live ASTER order submitted.",
                 "preview": preview,
                 "orders": {
-                    "set_leverage": {"symbol": self.config.symbol, "leverage": leverage},
+                    "set_leverage": {"symbol": preview["symbol"], "leverage": leverage},
                     "main_order": main_order,
                     "stop_loss_order": sl_order if enable_tpsl else None,
                     "take_profit_order": tp_order if enable_tpsl and preview["take_profit_pct"] > 0 else None,
                 },
             }
 
-        leverage_result = self.client.set_leverage(self.config.symbol, leverage)
+        leverage_result = self.client.set_leverage(preview["symbol"], leverage)
         main_result = self.client.place_order(main_order)
-        sl_result: Dict[str, Any] | None = None
-        tp_result: Dict[str, Any] | None = None
+        sl_result: Optional[Dict[str, Any]] = None
+        tp_result: Optional[Dict[str, Any]] = None
 
         if enable_tpsl:
             sl_result = self.client.place_order(sl_order)
@@ -269,22 +330,31 @@ class AsterManualTradingService:
         }
 
     def close_position_market(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        symbol = self._normalize_symbol(payload.get("symbol"))
+        position_side = str(payload.get("position_side", "")).upper().strip()
         dry_run = _to_bool(payload.get("dry_run"), self.config.dry_run)
-        positions = self.client.get_positions(self.config.symbol)
+        positions = self.client.get_positions(symbol)
+
         target = None
         for pos in positions:
             amt = _to_float(pos.get("positionAmt"), 0.0)
-            if abs(amt) > 1e-12:
-                target = pos
-                break
+            if abs(amt) <= 1e-12:
+                continue
+            if position_side == "LONG" and amt <= 0:
+                continue
+            if position_side == "SHORT" and amt >= 0:
+                continue
+            target = pos
+            break
+
         if target is None:
-            return {"success": False, "message": "No open ETHUSDT position to close."}
+            return {"success": False, "message": f"No open {symbol} position to close."}
 
         amount = _to_float(target.get("positionAmt"), 0.0)
         side = "SELL" if amount > 0 else "BUY"
         quantity = abs(amount)
         order_payload = {
-            "symbol": self.config.symbol,
+            "symbol": symbol,
             "side": side,
             "type": "MARKET",
             "quantity": quantity,
@@ -303,26 +373,97 @@ class AsterManualTradingService:
         result = self.client.place_order(order_payload)
         return {"success": True, "dry_run": False, "result": result}
 
-    def get_open_positions(self) -> Dict[str, Any]:
-        positions = self.client.get_positions(self.config.symbol)
+    def close_all_positions(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        dry_run = _to_bool(payload.get("dry_run"), self.config.dry_run)
+        positions = self.client.get_positions(None)
+        open_positions = [p for p in positions if abs(_to_float(p.get("positionAmt"), 0.0)) > 1e-12]
+        if not open_positions:
+            return {"success": False, "message": "No open positions to close.", "closed": 0, "failed": 0, "items": []}
+
+        items: List[Dict[str, Any]] = []
+        closed = 0
+        failed = 0
+        for pos in open_positions:
+            symbol = str(pos.get("symbol", "")).upper().strip()
+            amount = _to_float(pos.get("positionAmt"), 0.0)
+            side = "SELL" if amount > 0 else "BUY"
+            order_payload = {
+                "symbol": symbol,
+                "side": side,
+                "type": "MARKET",
+                "quantity": abs(amount),
+                "reduceOnly": "true",
+                "newOrderRespType": "RESULT",
+            }
+            if dry_run:
+                closed += 1
+                items.append({"symbol": symbol, "success": True, "dry_run": True, "order": order_payload})
+                continue
+            try:
+                result = self.client.place_order(order_payload)
+                closed += 1
+                items.append({"symbol": symbol, "success": True, "dry_run": False, "result": result})
+            except Exception as exc:
+                failed += 1
+                items.append({"symbol": symbol, "success": False, "error": str(exc)})
+
+        return {
+            "success": failed == 0,
+            "dry_run": dry_run,
+            "closed": closed,
+            "failed": failed,
+            "items": items,
+        }
+
+    def get_open_positions(self, symbol: Optional[str] = None) -> Dict[str, Any]:
+        selected_symbol = self._normalize_symbol(symbol) if symbol else "ALL"
+        positions = self.client.get_positions(None if selected_symbol == "ALL" else selected_symbol)
         items = []
         for pos in positions:
             amt = _to_float(pos.get("positionAmt"), 0.0)
             if abs(amt) <= 1e-12:
                 continue
+            symbol_name = str(pos.get("symbol", "")).upper()
+            if symbol_name not in MANUAL_ALLOWED_SYMBOLS:
+                continue
             items.append(pos)
-        return {"symbol": self.config.symbol, "items": items}
+        return {"symbol": selected_symbol, "items": items}
 
-    def get_open_orders(self) -> Dict[str, Any]:
-        return {"symbol": self.config.symbol, "items": self.client.get_open_orders(self.config.symbol)}
+    def get_open_orders(self, symbol: Optional[str] = None) -> Dict[str, Any]:
+        selected_symbol = self._normalize_symbol(symbol) if symbol else "ALL"
+        if selected_symbol != "ALL":
+            return {"symbol": selected_symbol, "items": self.client.get_open_orders(selected_symbol)}
 
-    def get_trade_history(self, limit: int = 100) -> Dict[str, Any]:
+        items: List[Dict[str, Any]] = []
+        try:
+            all_open = self.client.get_open_orders(None)
+            if isinstance(all_open, list):
+                for row in all_open:
+                    symbol_name = str(row.get("symbol", "")).upper()
+                    if symbol_name in MANUAL_ALLOWED_SYMBOLS:
+                        items.append(row)
+                return {"symbol": "ALL", "items": items}
+        except Exception:
+            pass
+
+        for symbol_name in MANUAL_ALLOWED_SYMBOLS:
+            try:
+                items.extend(self.client.get_open_orders(symbol_name))
+            except Exception:
+                continue
+        return {"symbol": "ALL", "items": items}
+
+    def get_trade_history(self, limit: int = 100, symbol: Optional[str] = None) -> Dict[str, Any]:
         safe_limit = max(1, min(int(limit), 1000))
-        return {"symbol": self.config.symbol, "items": self.client.get_user_trades(self.config.symbol, safe_limit)}
+        selected_symbol = self._normalize_symbol(symbol) if symbol else self.config.default_symbol
+        return {"symbol": selected_symbol, "items": self.client.get_user_trades(selected_symbol, safe_limit)}
 
-    def get_income_history(self, limit: int = 100) -> Dict[str, Any]:
+    def get_income_history(self, limit: int = 100, symbol: Optional[str] = None) -> Dict[str, Any]:
         safe_limit = max(1, min(int(limit), 1000))
-        return {"symbol": self.config.symbol, "items": self.client.get_income(self.config.symbol, safe_limit)}
+        selected_symbol = self._normalize_symbol(symbol) if symbol else self.config.default_symbol
+        return {"symbol": selected_symbol, "items": self.client.get_income(selected_symbol, safe_limit)}
 
     def get_config(self) -> Dict[str, Any]:
-        return asdict(self.config)
+        data = asdict(self.config)
+        data["allowed_symbols"] = list(MANUAL_ALLOWED_SYMBOLS)
+        return data

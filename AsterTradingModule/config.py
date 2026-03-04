@@ -14,7 +14,7 @@ class AsterTradingConfig:
     api_base_url: str = os.getenv("ASTER_TRADE_BASE_URL", "https://fapi.asterdex.com")
     api_key: str = os.getenv("ASTER_API_KEY", "")
     api_secret: str = os.getenv("ASTER_API_SECRET", "")
-    symbol: str = os.getenv("ASTER_SYMBOL", "ETHUSDT")
+    default_symbol: str = os.getenv("ASTER_SYMBOL", "ETHUSDT")
     leverage: int = int(os.getenv("ASTER_LEVERAGE", "5"))
     stop_loss_pct: float = float(os.getenv("ASTER_STOP_LOSS_PCT", "0.05"))
     take_profit_pct: float = float(os.getenv("ASTER_TAKE_PROFIT_PCT", "0.15"))

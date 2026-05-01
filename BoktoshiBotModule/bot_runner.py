@@ -613,6 +613,33 @@ class BotRunner:
         except MTCClientError as exc:
             self._register_rate_limit_backoff(now, exc, "positions")
             add_log(self.db_path, now, "ERROR", f"Positions fetch failed: {exc} ({exc.code})")
+            cached_raw = get_kv(self.db_path, "positions", "")
+            cached_positions: List[Dict[str, Any]] = []
+            if cached_raw:
+                try:
+                    parsed = json.loads(cached_raw)
+                    if isinstance(parsed, dict):
+                        parsed_positions = parsed.get("positions", [])
+                    elif isinstance(parsed, list):
+                        parsed_positions = parsed
+                    else:
+                        parsed_positions = []
+                    if isinstance(parsed_positions, list):
+                        cached_positions = [p for p in parsed_positions if isinstance(p, dict)]
+                except Exception:
+                    cached_positions = []
+
+            if cached_positions:
+                self._log_structured(
+                    now,
+                    "WARN",
+                    "positions_fetch_using_cached_snapshot",
+                    cached_count=len(cached_positions),
+                    error=str(exc),
+                    error_code=exc.code,
+                )
+                return cached_positions
+
             return []
 
     def _fetch_history(self, now: int) -> List[Dict[str, Any]]:

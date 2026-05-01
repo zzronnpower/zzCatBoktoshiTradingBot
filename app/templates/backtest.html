@@ -1,0 +1,672 @@
+<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="utf-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1" />
+    <title>Backtest - zzCatBoktoshiTradingBot</title>
+    <link rel="stylesheet" href="/static/app.css" />
+    <script src="https://unpkg.com/lightweight-charts@4.2.0/dist/lightweight-charts.standalone.production.js"></script>
+    <style>
+      .bt-shell { display: grid; gap: 14px; }
+      .bt-kpis { display: grid; grid-template-columns: repeat(auto-fit, minmax(170px, 1fr)); gap: 10px; }
+      .bt-kpi {
+        border: 1px solid var(--line);
+        border-radius: 10px;
+        padding: 12px;
+        background: linear-gradient(180deg, rgba(255, 255, 255, 0.05), rgba(255, 255, 255, 0.02));
+      }
+      .bt-kpi .k { display: block; color: var(--muted); font-size: 11px; text-transform: uppercase; letter-spacing: 0.5px; }
+      .bt-kpi .v { font-size: 24px; font-weight: 800; }
+      .bt-kpi .d { display: block; margin-top: 6px; font-size: 12px; color: var(--muted); }
+      .bt-pos { color: #7fe4b8; }
+      .bt-neg { color: #ff9e9e; }
+      .bt-grid { display: grid; grid-template-columns: 1fr; gap: 12px; }
+      .bt-chart { border: 1px solid var(--line); border-radius: 10px; overflow: hidden; height: 330px; }
+      .bt-head { display: flex; align-items: center; justify-content: space-between; flex-wrap: wrap; gap: 8px; }
+      .bt-note { color: var(--muted); font-size: 13px; }
+      .bt-chip {
+        border: 1px solid var(--line);
+        border-radius: 999px;
+        padding: 4px 10px;
+        font-size: 12px;
+        color: var(--text);
+        background: rgba(255, 255, 255, 0.04);
+      }
+      .bt-compare-row { display: grid; grid-template-columns: 1fr 1fr auto; gap: 8px; margin-top: 12px; }
+      .bt-compare-row select,
+      .bt-compare-row button {
+        border: 1px solid var(--line);
+        background: var(--input-bg);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      .bt-compare-row button { cursor: pointer; font-weight: 700; border-color: rgba(99, 215, 176, 0.48); }
+      .bt-compare-note { margin-top: 8px; color: var(--muted); font-size: 13px; }
+      .bt-filter-row { display: grid; grid-template-columns: repeat(5, minmax(0, 1fr)) auto; gap: 8px; margin-top: 10px; }
+      .bt-filter-row input,
+      .bt-filter-row select,
+      .bt-filter-row button {
+        border: 1px solid var(--line);
+        background: var(--input-bg);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      .bt-filter-row button { cursor: pointer; font-weight: 700; }
+      .bt-preset-row { display: flex; gap: 8px; flex-wrap: wrap; margin-top: 8px; }
+      .bt-preset-row button {
+        border: 1px solid var(--line);
+        background: rgba(255, 255, 255, 0.03);
+        color: var(--text);
+        border-radius: 999px;
+        padding: 6px 10px;
+        font-size: 12px;
+        cursor: pointer;
+      }
+      .bt-run-row { display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)) auto; gap: 8px; margin-top: 10px; }
+      .bt-run-row input,
+      .bt-run-row select,
+      .bt-run-row button {
+        border: 1px solid var(--line);
+        background: var(--input-bg);
+        color: var(--text);
+        border-radius: 8px;
+        padding: 8px 10px;
+      }
+      .bt-run-row button { cursor: pointer; font-weight: 700; border-color: rgba(106, 160, 255, 0.5); }
+      .bt-run-note { margin-top: 8px; color: var(--muted); font-size: 13px; }
+      .bt-table-wrap { overflow-x: auto; border: 1px solid var(--line); border-radius: 10px; }
+      .bt-table { width: 100%; border-collapse: collapse; min-width: 860px; }
+      .bt-table th,
+      .bt-table td { padding: 8px 10px; border-bottom: 1px solid rgba(255, 255, 255, 0.07); font-size: 13px; text-align: left; }
+      .bt-table th {
+        font-size: 11px;
+        text-transform: uppercase;
+        letter-spacing: 0.55px;
+        color: var(--muted);
+        background: rgba(0, 0, 0, 0.2);
+      }
+      .bt-table tr:last-child td { border-bottom: none; }
+      @media (max-width: 900px) {
+        .header h1 { font-size: 34px; }
+        .header p { font-size: 17px; }
+        .bt-compare-row { grid-template-columns: 1fr; }
+        .bt-filter-row { grid-template-columns: 1fr; }
+        .bt-run-row { grid-template-columns: 1fr; }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="page">
+      <header class="header">
+        <h1>Backtest Performance</h1>
+        <p>SOLUSDT on Binance Futures, strategy: MA50 4H CrossUp 3 Candles.</p>
+        <div class="nav-links">
+          <a href="/">Dashboard</a>
+          <a href="/manual" class="nav-position-management">Position Management</a>
+          <a href="/journal">Boktoshi Trading Journal</a>
+          <a href="/backtest" class="active">Backtest</a>
+          <a href="/strategy-summary">Tóm tắt Strategy</a>
+          <a href="/fredtrade-migration-report">FredTradeMigration Report</a>
+          <a href="/aster-chart">ASTER Chart</a>
+          <a href="/aster-trading">AsterTrading</a>
+          <a href="/aster-simple-trading">AsterSimpleTrading</a>
+          <a href="/chatlog">ChatLog</a>
+        </div>
+      </header>
+
+      <section class="bt-shell">
+        <div class="card">
+          <div class="bt-head">
+            <h2 style="margin: 0;">Run Context</h2>
+            <div class="bt-note" id="ctx-generated">Loading...</div>
+          </div>
+          <div style="display:flex; gap:8px; flex-wrap:wrap; margin-top:10px;">
+            <span class="bt-chip" id="ctx-pair">Pair: -</span>
+            <span class="bt-chip" id="ctx-strategy">Strategy: -</span>
+            <span class="bt-chip" id="ctx-tf">Timeframe: -</span>
+            <span class="bt-chip" id="ctx-range">Timerange: -</span>
+          </div>
+          <div class="bt-filter-row">
+            <input id="filter-timeframe" type="text" placeholder="Filter timeframe (e.g. 4h)" value="4h" />
+            <input id="filter-timerange" type="text" placeholder="Filter timerange (e.g. 20240308-)" />
+            <select id="filter-pair">
+              <option value="">All Pairs</option>
+              <option value="SOL/USDT:USDT">SOL/USDT:USDT</option>
+              <option value="BTC/USDT:USDT">BTC/USDT:USDT</option>
+              <option value="ETH/USDT:USDT">ETH/USDT:USDT</option>
+            </select>
+            <select id="filter-strategy">
+              <option value="">All Strategies</option>
+              <option value="BoktoshiMa50">MA50 Family</option>
+              <option value="EMA">EMA Family</option>
+              <option value="REGIME">REGIME Family</option>
+            </select>
+            <input id="filter-q" type="text" placeholder="Search label/artifact" />
+            <button id="filter-apply-btn" type="button">Apply Filters</button>
+          </div>
+          <div class="bt-preset-row">
+            <button type="button" class="preset-btn" data-months="3">3M</button>
+            <button type="button" class="preset-btn" data-months="6">6M</button>
+            <button type="button" class="preset-btn" data-months="12">12M</button>
+            <button type="button" class="preset-btn" data-ytd="1">YTD</button>
+            <button type="button" class="preset-btn" data-clear="1">Clear Range</button>
+          </div>
+          <div class="bt-run-row">
+            <select id="run-strategy">
+              <option value="BoktoshiMa50SolStrategy">BoktoshiMa50SolStrategy</option>
+              <option value="BoktoshiMa50SolCandidateStrategy">BoktoshiMa50SolCandidateStrategy</option>
+            </select>
+            <input id="run-pair" type="text" value="SOL/USDT:USDT" placeholder="Run pair" />
+            <input id="run-timeframe" type="text" value="4h" placeholder="Run timeframe" />
+            <input id="run-label" type="text" placeholder="Run label (optional)" />
+            <button id="run-backtest-btn" type="button">Run New Backtest</button>
+          </div>
+          <div class="bt-run-note" id="run-note">Run mode: ready.</div>
+          <div class="bt-compare-row">
+            <select id="base-run-select"></select>
+            <select id="candidate-run-select"></select>
+            <button id="compare-btn" type="button">Compare</button>
+          </div>
+          <div class="bt-compare-note" id="compare-note">Compare mode: loading run list...</div>
+        </div>
+
+        <div class="bt-kpis">
+          <div class="bt-kpi"><span class="k">Total PnL</span><span class="v" id="kpi-pnl">-</span><span class="d" id="delta-pnl">Delta: -</span></div>
+          <div class="bt-kpi"><span class="k">Win Rate</span><span class="v" id="kpi-win">-</span><span class="d" id="delta-win">Delta: -</span></div>
+          <div class="bt-kpi"><span class="k">Profit Factor</span><span class="v" id="kpi-pf">-</span><span class="d" id="delta-pf">Delta: -</span></div>
+          <div class="bt-kpi"><span class="k">Trades</span><span class="v" id="kpi-trades">-</span><span class="d" id="delta-trades">Delta: -</span></div>
+          <div class="bt-kpi"><span class="k">Max Drawdown</span><span class="v" id="kpi-mdd">-</span><span class="d" id="delta-mdd">Delta: -</span></div>
+          <div class="bt-kpi"><span class="k">Final Balance</span><span class="v" id="kpi-final">-</span><span class="d" id="delta-final">Delta: -</span></div>
+        </div>
+
+        <div class="bt-grid">
+          <div class="card">
+            <h2>Equity Curve (Baseline: blue, Candidate: green)</h2>
+            <div class="bt-chart" id="chart-equity"></div>
+          </div>
+          <div class="card">
+            <h2>Drawdown (%) (Baseline: blue, Candidate: green)</h2>
+            <div class="bt-chart" id="chart-drawdown"></div>
+          </div>
+        </div>
+
+        <div class="card">
+          <h2>Recent Trades (Candidate)</h2>
+          <div class="bt-table-wrap">
+            <table class="bt-table">
+              <thead>
+                <tr>
+                  <th>Close Time</th>
+                  <th>Pair</th>
+                  <th>Side</th>
+                  <th>Open</th>
+                  <th>Close</th>
+                  <th>Profit</th>
+                  <th>Profit %</th>
+                  <th>Duration</th>
+                  <th>Exit</th>
+                </tr>
+              </thead>
+              <tbody id="trade-rows">
+                <tr><td colspan="9">Loading...</td></tr>
+              </tbody>
+            </table>
+          </div>
+        </div>
+      </section>
+    </div>
+
+    <script src="/static/theme.js"></script>
+    <script>
+      let equityChart = null;
+      let equityBaseSeries = null;
+      let equityCandidateSeries = null;
+      let ddChart = null;
+      let ddBaseSeries = null;
+      let ddCandidateSeries = null;
+
+      const money = (n) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: 2 });
+      const pct = (n) => `${Number(n || 0).toFixed(2)}%`;
+      const ts = (sec) => {
+        if (!sec) return '-';
+        const d = new Date(Number(sec) * 1000);
+        return Number.isNaN(d.getTime()) ? '-' : d.toLocaleString();
+      };
+
+      function buildLineChart(elId) {
+        const el = document.getElementById(elId);
+        const styles = getComputedStyle(document.documentElement);
+        const chartBg = styles.getPropertyValue('--chart-bg').trim() || '#0d1627';
+        const chartGrid = styles.getPropertyValue('--chart-grid').trim() || 'rgba(255, 255, 255, 0.06)';
+        const chartText = styles.getPropertyValue('--text').trim() || '#c8d4e3';
+        const chartLine = styles.getPropertyValue('--line').trim() || 'rgba(255, 255, 255, 0.08)';
+
+        const chart = LightweightCharts.createChart(el, {
+          layout: { background: { type: 'solid', color: chartBg }, textColor: chartText },
+          grid: { vertLines: { color: chartGrid }, horzLines: { color: chartGrid } },
+          rightPriceScale: { borderColor: chartLine },
+          timeScale: { borderColor: chartLine, timeVisible: true, secondsVisible: false },
+          crosshair: { mode: LightweightCharts.CrosshairMode.Normal },
+          width: el.clientWidth,
+          height: 330,
+        });
+
+        const base = chart.addLineSeries({ lineWidth: 2, color: '#6aa0ff' });
+        const candidate = chart.addLineSeries({ lineWidth: 2, color: '#63d7b0' });
+        return { chart, base, candidate };
+      }
+
+      function setKpi(elId, value, positive = null) {
+        const el = document.getElementById(elId);
+        el.textContent = value;
+        el.classList.remove('bt-pos', 'bt-neg');
+        if (positive === true) el.classList.add('bt-pos');
+        if (positive === false) el.classList.add('bt-neg');
+      }
+
+      function setDelta(elId, value, positive = null, suffix = '') {
+        const el = document.getElementById(elId);
+        const shown = Number(value || 0);
+        const sign = shown >= 0 ? '+' : '';
+        el.textContent = `Delta: ${sign}${shown.toFixed(2)}${suffix}`;
+        el.classList.remove('bt-pos', 'bt-neg');
+        if (positive === true) el.classList.add('bt-pos');
+        if (positive === false) el.classList.add('bt-neg');
+      }
+
+      function renderTrades(items) {
+        const tbody = document.getElementById('trade-rows');
+        if (!Array.isArray(items) || items.length === 0) {
+          tbody.innerHTML = '<tr><td colspan="9">No trades found.</td></tr>';
+          return;
+        }
+        tbody.innerHTML = items.map((t) => {
+          const p = Number(t.profit_abs || 0);
+          const pp = Number(t.profit_pct || 0);
+          return `
+            <tr>
+              <td>${ts(t.close_time)}</td>
+              <td>${t.pair || '-'}</td>
+              <td>${t.is_short ? 'SHORT' : 'LONG'}</td>
+              <td>${money(t.open_rate)}</td>
+              <td>${money(t.close_rate)}</td>
+              <td class="${p >= 0 ? 'bt-pos' : 'bt-neg'}">${p >= 0 ? '+' : ''}${money(p)}</td>
+              <td class="${pp >= 0 ? 'bt-pos' : 'bt-neg'}">${pp >= 0 ? '+' : ''}${pp.toFixed(2)}%</td>
+              <td>${Number(t.duration_min || 0)}m</td>
+              <td>${t.exit_reason || '-'}</td>
+            </tr>
+          `;
+        }).join('');
+      }
+
+      async function fetchJson(path) {
+        const res = await fetch(path);
+        const text = await res.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch (e) { data = { detail: text || 'Unknown error' }; }
+        if (!res.ok) throw new Error(data.detail || `HTTP ${res.status}`);
+        return data;
+      }
+
+      function applySingleRun(run) {
+        const summary = run.summary || {};
+        const context = run.context || {};
+        const source = run.source || {};
+
+        document.getElementById('ctx-generated').textContent = `Generated: ${ts(run.generated_at)} | Artifact: ${run.artifact_id || '-'}`;
+        document.getElementById('ctx-pair').textContent = `Pair: ${context.pair || '-'}`;
+        document.getElementById('ctx-strategy').textContent = `Strategy: ${source.strategy || '-'}`;
+        document.getElementById('ctx-tf').textContent = `Timeframe: ${context.timeframe || '-'}`;
+        document.getElementById('ctx-range').textContent = `Timerange: ${context.timerange || '-'}`;
+
+        const pnl = Number(summary.total_pnl_abs || 0);
+        setKpi('kpi-pnl', `${pnl >= 0 ? '+' : ''}${money(pnl)} (${pct(summary.total_pnl_pct || 0)})`, pnl >= 0);
+        setKpi('kpi-win', pct(summary.win_rate_pct || 0), Number(summary.win_rate_pct || 0) >= 50);
+        setKpi('kpi-pf', Number(summary.profit_factor || 0).toFixed(2), Number(summary.profit_factor || 0) >= 1);
+        setKpi('kpi-trades', String(summary.total_trades || 0));
+        setKpi('kpi-mdd', pct(summary.max_drawdown_pct || 0), false);
+        setKpi('kpi-final', money(summary.final_balance || 0), Number(summary.final_balance || 0) >= Number(summary.starting_balance || 0));
+
+        setDelta('delta-pnl', 0, null, '');
+        setDelta('delta-win', 0, null, '%');
+        setDelta('delta-pf', 0, null, '');
+        setDelta('delta-trades', 0, null, '');
+        setDelta('delta-mdd', 0, null, '%');
+        setDelta('delta-final', 0, null, '');
+
+        const eq = Array.isArray(run.equity_curve) ? run.equity_curve : [];
+        const dd = Array.isArray(run.drawdown_curve) ? run.drawdown_curve : [];
+        equityBaseSeries.setData(eq.map((p) => ({ time: Number(p.time || 0), value: Number(p.value || 0) })));
+        equityCandidateSeries.setData([]);
+        ddBaseSeries.setData(dd.map((p) => ({ time: Number(p.time || 0), value: Number(p.value || 0) })));
+        ddCandidateSeries.setData([]);
+        equityChart.timeScale().fitContent();
+        ddChart.timeScale().fitContent();
+
+        renderTrades(Array.isArray(run.recent_trades) ? run.recent_trades : []);
+      }
+
+      function toOptionLabel(run) {
+        const when = ts(run.generated_at || 0);
+        const label = run.label ? ` | ${run.label}` : '';
+        return `${run.artifact_id || '-'}${label} | ${when}`;
+      }
+
+      function mergeStrategyOptions(apiItems) {
+        const base = [
+          { value: '', text: 'All Strategies' },
+          { value: 'BoktoshiMa50', text: 'MA50 Family' },
+          { value: 'EMA', text: 'EMA Family' },
+          { value: 'REGIME', text: 'REGIME Family' },
+        ];
+        const seen = new Set(base.map((x) => x.value.toLowerCase()));
+        const dyn = [];
+        for (const item of apiItems || []) {
+          const value = String(item || '').trim();
+          if (!value) continue;
+          const key = value.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          dyn.push({ value, text: value });
+        }
+        return [...base, ...dyn];
+      }
+
+      function mergePairOptions(apiItems) {
+        const base = [
+          { value: '', text: 'All Pairs' },
+          { value: 'SOL/USDT:USDT', text: 'SOL/USDT:USDT' },
+          { value: 'BTC/USDT:USDT', text: 'BTC/USDT:USDT' },
+          { value: 'ETH/USDT:USDT', text: 'ETH/USDT:USDT' },
+        ];
+        const seen = new Set(base.map((x) => x.value.toLowerCase()));
+        const dyn = [];
+        for (const item of apiItems || []) {
+          const value = String(item || '').trim();
+          if (!value) continue;
+          const key = value.toLowerCase();
+          if (seen.has(key)) continue;
+          seen.add(key);
+          dyn.push({ value, text: value });
+        }
+        return [...base, ...dyn];
+      }
+
+      async function loadStrategyOptions() {
+        const strategySelect = document.getElementById('filter-strategy');
+        const runStrategySelect = document.getElementById('run-strategy');
+        const current = strategySelect.value;
+        const runCurrent = runStrategySelect.value;
+        const payload = await fetchJson('/api/backtest/strategies');
+        const items = mergeStrategyOptions(Array.isArray(payload.items) ? payload.items : []);
+        strategySelect.innerHTML = items.map((x) => `<option value="${x.value}">${x.text}</option>`).join('');
+        if (current && items.some((x) => x.value === current)) {
+          strategySelect.value = current;
+        }
+
+        const runItems = Array.isArray(payload.items) ? payload.items : [];
+        const runOptions = runItems.length
+          ? runItems.map((x) => `<option value="${x}">${x}</option>`).join('')
+          : '<option value="BoktoshiMa50SolStrategy">BoktoshiMa50SolStrategy</option>';
+        runStrategySelect.innerHTML = runOptions;
+        if (runCurrent && runItems.includes(runCurrent)) {
+          runStrategySelect.value = runCurrent;
+        }
+      }
+
+      async function loadPairOptions() {
+        const pairSelect = document.getElementById('filter-pair');
+        const current = pairSelect.value;
+        const payload = await fetchJson('/api/backtest/pairs');
+        const items = mergePairOptions(Array.isArray(payload.items) ? payload.items : []);
+        pairSelect.innerHTML = items.map((x) => `<option value="${x.value}">${x.text}</option>`).join('');
+        if (current && items.some((x) => x.value === current)) {
+          pairSelect.value = current;
+        }
+      }
+
+      function fmtYmd(date) {
+        const y = date.getUTCFullYear();
+        const m = String(date.getUTCMonth() + 1).padStart(2, '0');
+        const d = String(date.getUTCDate()).padStart(2, '0');
+        return `${y}${m}${d}`;
+      }
+
+      function computeRangeFromMonths(months) {
+        const now = new Date();
+        const from = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate()));
+        from.setUTCMonth(from.getUTCMonth() - months);
+        return `${fmtYmd(from)}-`;
+      }
+
+      function computeYtdRange() {
+        const now = new Date();
+        return `${now.getUTCFullYear()}0101-`;
+      }
+
+      function fillRunSelects(items) {
+        const baseSel = document.getElementById('base-run-select');
+        const candSel = document.getElementById('candidate-run-select');
+        if (!Array.isArray(items) || items.length === 0) {
+          baseSel.innerHTML = '';
+          candSel.innerHTML = '';
+          return;
+        }
+        const opts = items.map((run) => `<option value="${run.artifact_id}">${toOptionLabel(run)}</option>`).join('');
+        baseSel.innerHTML = opts;
+        candSel.innerHTML = opts;
+        if (items.length > 0) {
+          candSel.value = items[0].artifact_id;
+          baseSel.value = (items[1] && items[1].artifact_id) || items[0].artifact_id;
+        }
+      }
+
+      async function runCompare() {
+        const baseId = document.getElementById('base-run-select').value;
+        const candidateId = document.getElementById('candidate-run-select').value;
+        if (!baseId || !candidateId) throw new Error('Please select both baseline and candidate runs.');
+
+        const data = await fetchJson(`/api/backtest/compare?base_id=${encodeURIComponent(baseId)}&candidate_id=${encodeURIComponent(candidateId)}`);
+        const base = data.base || {};
+        const candidate = data.candidate || {};
+        const delta = data.delta || {};
+
+        const summary = candidate.summary || {};
+        const context = candidate.context || {};
+        const source = candidate.source || {};
+        document.getElementById('ctx-generated').textContent = `Candidate: ${candidate.artifact_id || candidateId} | Baseline: ${base.artifact_id || baseId}`;
+        document.getElementById('ctx-pair').textContent = `Pair: ${context.pair || '-'}`;
+        document.getElementById('ctx-strategy').textContent = `Strategy: ${source.strategy || '-'}`;
+        document.getElementById('ctx-tf').textContent = `Timeframe: ${context.timeframe || '-'}`;
+        document.getElementById('ctx-range').textContent = `Timerange: ${context.timerange || '-'}`;
+
+        const pnl = Number(summary.total_pnl_abs || 0);
+        setKpi('kpi-pnl', `${pnl >= 0 ? '+' : ''}${money(pnl)} (${pct(summary.total_pnl_pct || 0)})`, pnl >= 0);
+        setKpi('kpi-win', pct(summary.win_rate_pct || 0), Number(summary.win_rate_pct || 0) >= 50);
+        setKpi('kpi-pf', Number(summary.profit_factor || 0).toFixed(2), Number(summary.profit_factor || 0) >= 1);
+        setKpi('kpi-trades', String(summary.total_trades || 0));
+        setKpi('kpi-mdd', pct(summary.max_drawdown_pct || 0), false);
+        setKpi('kpi-final', money(summary.final_balance || 0), Number(summary.final_balance || 0) >= Number(summary.starting_balance || 0));
+
+        setDelta('delta-pnl', Number(delta.total_pnl_abs || 0), Number(delta.total_pnl_abs || 0) >= 0, '');
+        setDelta('delta-win', Number(delta.win_rate_pct || 0), Number(delta.win_rate_pct || 0) >= 0, '%');
+        setDelta('delta-pf', Number(delta.profit_factor || 0), Number(delta.profit_factor || 0) >= 0, '');
+        setDelta('delta-trades', Number(delta.total_trades || 0), null, '');
+        setDelta('delta-mdd', Number(delta.max_drawdown_pct || 0), Number(delta.max_drawdown_pct || 0) <= 0, '%');
+        setDelta('delta-final', Number(delta.final_balance || 0), Number(delta.final_balance || 0) >= 0, '');
+
+        const baseEq = Array.isArray(base.equity_curve) ? base.equity_curve : [];
+        const candEq = Array.isArray(candidate.equity_curve) ? candidate.equity_curve : [];
+        equityBaseSeries.setData(baseEq.map((p) => ({ time: Number(p.time || 0), value: Number(p.value || 0) })));
+        equityCandidateSeries.setData(candEq.map((p) => ({ time: Number(p.time || 0), value: Number(p.value || 0) })));
+
+        const baseDd = Array.isArray(base.drawdown_curve) ? base.drawdown_curve : [];
+        const candDd = Array.isArray(candidate.drawdown_curve) ? candidate.drawdown_curve : [];
+        ddBaseSeries.setData(baseDd.map((p) => ({ time: Number(p.time || 0), value: Number(p.value || 0) })));
+        ddCandidateSeries.setData(candDd.map((p) => ({ time: Number(p.time || 0), value: Number(p.value || 0) })));
+        equityChart.timeScale().fitContent();
+        ddChart.timeScale().fitContent();
+
+        renderTrades(Array.isArray(candidate.recent_trades) ? candidate.recent_trades : []);
+        document.getElementById('compare-note').textContent = `Compare done: baseline ${base.artifact_id || baseId} vs candidate ${candidate.artifact_id || candidateId}.`;
+      }
+
+      async function loadRunList() {
+        const timeframe = document.getElementById('filter-timeframe').value.trim();
+        const timerange = document.getElementById('filter-timerange').value.trim();
+        const pair = document.getElementById('filter-pair').value.trim();
+        const strategy = document.getElementById('filter-strategy').value.trim();
+        const q = document.getElementById('filter-q').value.trim();
+        const params = new URLSearchParams();
+        params.set('limit', '50');
+        if (timeframe) params.set('timeframe', timeframe);
+        if (timerange) params.set('timerange', timerange);
+        if (pair) params.set('pair', pair);
+        if (strategy) params.set('strategy', strategy);
+        if (q) params.set('q', q);
+        const runsPayload = await fetchJson(`/api/backtest/runs?${params.toString()}`);
+        const runs = Array.isArray(runsPayload.items) ? runsPayload.items : [];
+        fillRunSelects(runs);
+        document.getElementById('compare-note').textContent = runs.length
+          ? `Loaded ${runs.length} run(s). Choose baseline/candidate then Compare.`
+          : 'No runs match current filters.';
+      }
+
+      async function runBacktestNow() {
+        const strategy = document.getElementById('run-strategy').value.trim();
+        const pair = document.getElementById('run-pair').value.trim();
+        const timeframe = document.getElementById('run-timeframe').value.trim();
+        const timerange = document.getElementById('filter-timerange').value.trim() || '20240308-';
+        const label = document.getElementById('run-label').value.trim();
+
+        const payload = { strategy, pair, timeframe, timerange, label };
+        const res = await fetch('/api/backtest/run', {
+          method: 'POST',
+          headers: { 'Content-Type': 'application/json' },
+          body: JSON.stringify(payload),
+        });
+        const text = await res.text();
+        let data = {};
+        try { data = text ? JSON.parse(text) : {}; } catch (e) { data = { detail: text || 'Unknown error' }; }
+        if (!res.ok) {
+          const detail = typeof data.detail === 'string' ? data.detail : JSON.stringify(data.detail || data);
+          throw new Error(detail || `HTTP ${res.status}`);
+        }
+
+        document.getElementById('run-note').textContent = `Run success: artifact ${data.artifact_id || '-'} | trades ${Number(data.summary?.total_trades || 0)}`;
+        const latest = await fetchJson('/api/backtest/latest');
+        applySingleRun(latest);
+        await loadStrategyOptions();
+        await loadPairOptions();
+        await loadRunList();
+      }
+
+      function bindEvents() {
+        const compareBtn = document.getElementById('compare-btn');
+        const filterBtn = document.getElementById('filter-apply-btn');
+        const runBtn = document.getElementById('run-backtest-btn');
+        compareBtn.addEventListener('click', async () => {
+          compareBtn.disabled = true;
+          compareBtn.textContent = 'Comparing...';
+          try {
+            await runCompare();
+          } catch (e) {
+            document.getElementById('compare-note').textContent = `Compare error: ${String(e.message || e)}`;
+          } finally {
+            compareBtn.disabled = false;
+            compareBtn.textContent = 'Compare';
+          }
+        });
+
+        filterBtn.addEventListener('click', async () => {
+          filterBtn.disabled = true;
+          filterBtn.textContent = 'Filtering...';
+          try {
+            await loadRunList();
+          } catch (e) {
+            document.getElementById('compare-note').textContent = `Filter error: ${String(e.message || e)}`;
+          } finally {
+            filterBtn.disabled = false;
+            filterBtn.textContent = 'Apply Filters';
+          }
+        });
+
+        const strategySelect = document.getElementById('filter-strategy');
+        const pairSelect = document.getElementById('filter-pair');
+        strategySelect.addEventListener('change', async () => {
+          await loadRunList();
+        });
+        pairSelect.addEventListener('change', async () => {
+          await loadRunList();
+        });
+
+        const presetButtons = Array.from(document.querySelectorAll('.preset-btn'));
+        for (const btn of presetButtons) {
+          btn.addEventListener('click', async () => {
+            const input = document.getElementById('filter-timerange');
+            if (btn.dataset.clear === '1') {
+              input.value = '';
+            } else if (btn.dataset.ytd === '1') {
+              input.value = computeYtdRange();
+            } else if (btn.dataset.months) {
+              input.value = computeRangeFromMonths(Number(btn.dataset.months));
+            }
+            await loadRunList();
+          });
+        }
+
+        runBtn.addEventListener('click', async () => {
+          runBtn.disabled = true;
+          runBtn.textContent = 'Running...';
+          document.getElementById('run-note').textContent = 'Run mode: running backtest, please wait...';
+          try {
+            await runBacktestNow();
+          } catch (e) {
+            document.getElementById('run-note').textContent = `Run error: ${String(e.message || e)}`;
+          } finally {
+            runBtn.disabled = false;
+            runBtn.textContent = 'Run New Backtest';
+          }
+        });
+      }
+
+      function bootCharts() {
+        const eq = buildLineChart('chart-equity');
+        equityChart = eq.chart;
+        equityBaseSeries = eq.base;
+        equityCandidateSeries = eq.candidate;
+
+        const dd = buildLineChart('chart-drawdown');
+        ddChart = dd.chart;
+        ddBaseSeries = dd.base;
+        ddCandidateSeries = dd.candidate;
+
+        window.addEventListener('resize', () => {
+          const eqEl = document.getElementById('chart-equity');
+          const ddEl = document.getElementById('chart-drawdown');
+          if (eqEl) equityChart.applyOptions({ width: eqEl.clientWidth, height: 330 });
+          if (ddEl) ddChart.applyOptions({ width: ddEl.clientWidth, height: 330 });
+        });
+      }
+
+      (async () => {
+        try {
+          bootCharts();
+          bindEvents();
+          await loadStrategyOptions();
+          await loadPairOptions();
+
+          const latest = await fetchJson('/api/backtest/latest');
+          applySingleRun(latest);
+          await loadRunList();
+        } catch (e) {
+          document.getElementById('ctx-generated').textContent = `Error: ${e.message || e}`;
+          document.getElementById('trade-rows').innerHTML = `<tr><td colspan="9">${String(e.message || e)}</td></tr>`;
+          document.getElementById('compare-note').textContent = `Load error: ${String(e.message || e)}`;
+        }
+      })();
+    </script>
+  </body>
+</html>

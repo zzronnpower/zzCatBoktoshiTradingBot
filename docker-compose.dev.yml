@@ -11,7 +11,12 @@ services:
       - ./app:/app/app
       - ./BoktoshiBotModule:/app/BoktoshiBotModule
       - ./AsterTradingModule:/app/AsterTradingModule
+      - ./BacktestModule:/app/BacktestModule
+      - ./scripts:/app/scripts
       - ./data:/app/data
+      - ../FreqTradeProject/freqtrade:/home/zzcatzz/zzCodeProject/FreqTradeProject/freqtrade
+      - /var/run/docker.sock:/var/run/docker.sock
     environment:
       - WATCHFILES_FORCE_POLLING=true
+      - FREQTRADE_PROJECT_DIR=/home/zzcatzz/zzCodeProject/FreqTradeProject/freqtrade
     command: uvicorn app.main:app --host 0.0.0.0 --port 8000 --reload --reload-dir /app/app --reload-dir /app/BoktoshiBotModule --reload-dir /app/AsterTradingModule

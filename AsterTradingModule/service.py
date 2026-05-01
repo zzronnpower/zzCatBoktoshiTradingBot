@@ -1,4 +1,5 @@
 import time
+import math
 from dataclasses import asdict
 from typing import Any, Dict, List, Optional
 
@@ -27,10 +28,54 @@ class AsterManualTradingService:
         self.config = config or AsterTradingConfig()
         self.client = AsterTradeClient(self.config)
         self._symbol_filters_cache: Dict[str, Dict[str, Any]] = {}
+        self._symbols_cache: List[str] = []
+        self._symbols_cache_ts = 0.0
+        self._manual_auto_max_positions = 3
+        self._manual_auto_min_leverage = 3
+        self._manual_auto_max_leverage = 6
+        self._manual_auto_balance_buffer_ratio = 0.10
+
+    def _count_open_positions(self) -> int:
+        try:
+            positions = self.client.get_positions(None)
+        except Exception:
+            return 0
+        return sum(1 for pos in positions if abs(_to_float(pos.get("positionAmt"), 0.0)) > 1e-12)
+
+    def _discover_tradable_symbols(self, force_refresh: bool = False) -> List[str]:
+        now = time.time()
+        if not force_refresh and self._symbols_cache and (now - self._symbols_cache_ts) < 30:
+            return list(self._symbols_cache)
+
+        exchange_info = self.client.get_exchange_info()
+        raw_symbols = exchange_info.get("symbols", []) if isinstance(exchange_info, dict) else []
+
+        tradable: List[str] = []
+        for item in raw_symbols:
+            if not isinstance(item, dict):
+                continue
+            symbol = str(item.get("symbol", "")).upper().strip()
+            if not symbol:
+                continue
+            contract_type = str(item.get("contractType", "")).upper().strip()
+            status = str(item.get("status", "")).upper().strip()
+            quote = str(item.get("quoteAsset", "")).upper().strip()
+            if contract_type != "PERPETUAL" or status != "TRADING" or quote != "USDT":
+                continue
+            tradable.append(symbol)
+
+        unique_sorted = sorted(set(tradable))
+        self._symbols_cache = unique_sorted
+        self._symbols_cache_ts = now
+        return list(unique_sorted)
 
     def _normalize_symbol(self, symbol: Any) -> str:
         selected = str(symbol or self.config.default_symbol).upper().strip()
-        if selected not in MANUAL_ALLOWED_SYMBOLS:
+        try:
+            tradable = self._discover_tradable_symbols()
+        except Exception:
+            tradable = list(MANUAL_ALLOWED_SYMBOLS)
+        if selected not in tradable:
             raise AsterTradeError(f"Unsupported symbol: {selected}")
         return selected
 
@@ -76,18 +121,30 @@ class AsterManualTradingService:
         return mark
 
     def get_symbols(self) -> Dict[str, Any]:
-        return {"items": list(MANUAL_ALLOWED_SYMBOLS), "default": self.config.default_symbol}
+        items: List[str]
+        try:
+            items = self._discover_tradable_symbols(force_refresh=True)
+        except Exception:
+            items = list(MANUAL_ALLOWED_SYMBOLS)
+        if not items:
+            items = list(MANUAL_ALLOWED_SYMBOLS)
+
+        default_symbol = str(self.config.default_symbol).upper().strip()
+        if default_symbol not in items:
+            default_symbol = items[0]
+        return {"items": items, "default": default_symbol}
 
     def get_connection_status(self) -> Dict[str, Any]:
-        has_key = bool(str(self.config.api_key or "").strip())
-        has_secret = bool(str(self.config.api_secret or "").strip())
-        if not has_key or not has_secret:
+        has_user = bool(str(self.config.user_address or "").strip())
+        has_signer = bool(str(self.config.signer_address or "").strip())
+        has_pk = bool(str(self.config.signer_private_key or "").strip())
+        if not has_user or not has_signer or not has_pk:
             return {
                 "ok": False,
                 "configured": False,
-                "message": "ASTER API key/secret is missing.",
+                "message": "ASTER Pro API credential is missing.",
                 "hints": [
-                    "Set ASTER_API_KEY and ASTER_API_SECRET in AsterTradingModule/.env.",
+                    "Set ASTER_USER_ADDRESS, ASTER_SIGNER_ADDRESS, ASTER_SIGNER_PRIVATE_KEY in AsterTradingModule/.env.",
                     "Restart container after updating env values.",
                 ],
             }
@@ -99,7 +156,7 @@ class AsterManualTradingService:
             return {
                 "ok": True,
                 "configured": True,
-                "message": "ASTER API auth is working.",
+                "message": "ASTER Pro API auth is working.",
                 "wallet_balance": _to_float(usdt.get("walletBalance"), 0.0),
                 "available_balance": _to_float(usdt.get("availableBalance"), 0.0),
                 "can_read_account": isinstance(account, dict),
@@ -107,16 +164,20 @@ class AsterManualTradingService:
         except AsterTradeError as exc:
             hints = []
             msg_l = str(exc).lower()
-            if "invalid api-key" in msg_l or "permissions" in msg_l or exc.code in {-2015, -2014}:
+            if "permissions" in msg_l or exc.code in {-2015, -2014, -4013}:
                 hints = [
-                    "Verify ASTER_API_KEY and ASTER_API_SECRET are correct.",
-                    "Enable Futures permission for this API key.",
-                    "Whitelist your server IP in ASTER API key settings.",
+                    "Verify ASTER_USER_ADDRESS, ASTER_SIGNER_ADDRESS, ASTER_SIGNER_PRIVATE_KEY are correct.",
+                    "Check Pro API signer wallet permission in ASTER API wallet settings.",
+                    "Ensure server time is synced; nonce drift beyond 10 seconds can fail.",
+                ]
+            elif "nonce" in msg_l:
+                hints = [
+                    "Nonce rejected. Check server time sync and ensure unique increasing nonce per request.",
                 ]
             elif exc.status_code == 429:
                 hints = ["Rate limit reached. Wait and retry."]
             else:
-                hints = ["Check API key status and network connectivity to ASTER."]
+                hints = ["Check Pro API wallet status and network connectivity to ASTER."]
             return {
                 "ok": False,
                 "configured": True,
@@ -179,6 +240,7 @@ class AsterManualTradingService:
 
     def preview_order(self, payload: Dict[str, Any]) -> Dict[str, Any]:
         symbol = self._normalize_symbol(payload.get("symbol"))
+        settings_mode = str(payload.get("settings_mode", "normal")).strip().lower()
         leverage = int(_to_float(payload.get("leverage"), self.config.leverage))
         leverage = max(1, min(leverage, 125))
         margin_usdt = max(_to_float(payload.get("margin_usdt"), self.config.margin_per_trade_usdt), 0.0)
@@ -187,6 +249,8 @@ class AsterManualTradingService:
         stop_loss_pct = max(_to_float(payload.get("stop_loss_pct"), self.config.stop_loss_pct), 0.0001)
         take_profit_pct = max(_to_float(payload.get("take_profit_pct"), self.config.take_profit_pct), 0.0)
         auto_stoploss_1pct = _to_bool(payload.get("auto_stoploss_1pct"), False)
+        tp_mode = str(payload.get("tp_mode", "manual")).lower().strip()
+        tp_rr = max(_to_float(payload.get("tp_rr"), 3.0), 0.1)
 
         side = str(payload.get("side", "BUY")).upper()
         if side not in {"BUY", "SELL"}:
@@ -201,6 +265,57 @@ class AsterManualTradingService:
         entry_price = _to_float(payload.get("price"), mark_price) if order_type == "LIMIT" else mark_price
         if entry_price <= 0:
             entry_price = mark_price
+
+        open_positions_count = 0
+        remaining_slots = self._manual_auto_max_positions
+        margin_budget_per_slot = 0.0
+        leverage_needed = float(leverage)
+        usable_balance = 0.0
+
+        if settings_mode == "manual_sl_auto_rest":
+            manual_sl_price = _to_float(payload.get("manual_sl_price"), 0.0)
+            risk_pct_total_capital = max(_to_float(payload.get("risk_pct_total_capital"), 0.0), 0.0)
+            if risk_pct_total_capital > 5.0:
+                raise AsterTradeError("Risk % on total capital cannot exceed 5%.")
+            if manual_sl_price <= 0:
+                raise AsterTradeError("Manual SL price is required for Manual SL, Auto the Rest mode.")
+            if side == "BUY" and manual_sl_price >= entry_price:
+                raise AsterTradeError("For LONG, manual SL price must be below entry price.")
+            if side == "SELL" and manual_sl_price <= entry_price:
+                raise AsterTradeError("For SHORT, manual SL price must be above entry price.")
+
+            sl_distance_pct = abs(entry_price - manual_sl_price) / max(entry_price, 1e-9)
+            if sl_distance_pct <= 0:
+                raise AsterTradeError("Manual SL distance is too small.")
+
+            overview = self.get_account_overview()
+            account_equity = _to_float(overview.get("margin", {}).get("account_equity"), 0.0)
+            available_balance = _to_float(overview.get("margin", {}).get("available_balance"), 0.0)
+            if account_equity <= 0:
+                raise AsterTradeError("Cannot resolve account equity for risk sizing.")
+            if available_balance <= 0:
+                raise AsterTradeError("Available balance is not enough for opening new position.")
+
+            open_positions_count = self._count_open_positions()
+            remaining_slots = self._manual_auto_max_positions - open_positions_count
+            if remaining_slots <= 0:
+                raise AsterTradeError("Cannot open more positions: max 3 positions reached.")
+
+            usable_balance = max(available_balance * (1.0 - self._manual_auto_balance_buffer_ratio), 0.0)
+            if usable_balance <= 0:
+                raise AsterTradeError("Usable balance is too low after reserve buffer.")
+            margin_budget_per_slot = usable_balance / max(remaining_slots, 1)
+            if margin_budget_per_slot <= 0:
+                raise AsterTradeError("Margin budget per slot is zero.")
+
+            risk_usdt_target = account_equity * (risk_pct_total_capital / 100.0)
+            notional = risk_usdt_target / sl_distance_pct
+            stop_loss_pct = sl_distance_pct
+
+            leverage_needed = notional / margin_budget_per_slot
+            leverage = int(max(self._manual_auto_min_leverage, min(self._manual_auto_max_leverage, math.ceil(leverage_needed))))
+            if leverage_needed > self._manual_auto_max_leverage + 1e-9:
+                raise AsterTradeError("Cannot satisfy risk+SL within leverage limit x6 and remaining slots rule.")
 
         raw_qty = notional / max(entry_price, 1e-9)
         quantity = floor_to_step(raw_qty, str(filters.get("step_size", "0.001")))
@@ -219,9 +334,18 @@ class AsterManualTradingService:
                 stop_loss_pct = max((account_equity * 0.01) / computed_notional, 0.0001)
 
         sl_mult = 1 - stop_loss_pct if side == "BUY" else 1 + stop_loss_pct
-        tp_mult = 1 + take_profit_pct if side == "BUY" else 1 - take_profit_pct
         stop_price = round_to_tick(entry_price * sl_mult, str(filters.get("tick_size", "0.01")))
-        take_profit_price = round_to_tick(entry_price * tp_mult, str(filters.get("tick_size", "0.01")))
+        if tp_mode == "rr":
+            risk_distance = abs(entry_price - stop_price)
+            if side == "BUY":
+                take_profit_price = round_to_tick(entry_price + (tp_rr * risk_distance), str(filters.get("tick_size", "0.01")))
+            else:
+                take_profit_price = round_to_tick(entry_price - (tp_rr * risk_distance), str(filters.get("tick_size", "0.01")))
+            if entry_price > 0:
+                take_profit_pct = abs(take_profit_price - entry_price) / entry_price
+        else:
+            tp_mult = 1 + take_profit_pct if side == "BUY" else 1 - take_profit_pct
+            take_profit_price = round_to_tick(entry_price * tp_mult, str(filters.get("tick_size", "0.01")))
 
         margin = computed_notional / max(leverage, 1)
         risk_usdt = computed_notional * stop_loss_pct
@@ -232,6 +356,7 @@ class AsterManualTradingService:
             warnings.append("Quantity resolved to zero after step-size rounding.")
 
         return {
+            "settings_mode": settings_mode,
             "symbol": symbol,
             "side": side,
             "order_type": order_type,
@@ -247,6 +372,22 @@ class AsterManualTradingService:
             "take_profit_price": take_profit_price,
             "risk_usdt": risk_usdt,
             "auto_stoploss_1pct": auto_stoploss_1pct,
+            "tp_mode": tp_mode,
+            "tp_rr": tp_rr,
+            "manual_auto_limits": {
+                "max_positions": self._manual_auto_max_positions,
+                "leverage_min": self._manual_auto_min_leverage,
+                "leverage_max": self._manual_auto_max_leverage,
+                "balance_buffer_ratio": self._manual_auto_balance_buffer_ratio,
+            },
+            "manual_auto_runtime": {
+                "open_positions_count": open_positions_count,
+                "remaining_slots": remaining_slots,
+                "usable_balance": usable_balance,
+                "margin_budget_per_slot": margin_budget_per_slot,
+                "leverage_needed": leverage_needed,
+                "leverage_chosen": leverage,
+            },
             "filters": filters,
             "warnings": warnings,
         }
@@ -423,9 +564,6 @@ class AsterManualTradingService:
             amt = _to_float(pos.get("positionAmt"), 0.0)
             if abs(amt) <= 1e-12:
                 continue
-            symbol_name = str(pos.get("symbol", "")).upper()
-            if symbol_name not in MANUAL_ALLOWED_SYMBOLS:
-                continue
             items.append(pos)
         return {"symbol": selected_symbol, "items": items}
 
@@ -439,14 +577,19 @@ class AsterManualTradingService:
             all_open = self.client.get_open_orders(None)
             if isinstance(all_open, list):
                 for row in all_open:
-                    symbol_name = str(row.get("symbol", "")).upper()
-                    if symbol_name in MANUAL_ALLOWED_SYMBOLS:
+                    if isinstance(row, dict):
                         items.append(row)
                 return {"symbol": "ALL", "items": items}
         except Exception:
             pass
 
-        for symbol_name in MANUAL_ALLOWED_SYMBOLS:
+        dynamic_symbols: List[str]
+        try:
+            dynamic_symbols = self._discover_tradable_symbols()
+        except Exception:
+            dynamic_symbols = list(MANUAL_ALLOWED_SYMBOLS)
+
+        for symbol_name in dynamic_symbols:
             try:
                 items.extend(self.client.get_open_orders(symbol_name))
             except Exception:

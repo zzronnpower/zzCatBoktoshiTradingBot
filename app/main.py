@@ -1,6 +1,7 @@
 import json
 import math
 import os
+import subprocess
 import threading
 import time
 from contextlib import asynccontextmanager
@@ -26,6 +27,8 @@ from BoktoshiBotModule.strategy import (
 )
 from AsterTradingModule import AsterManualTradingService, AsterTradingConfig
 from .schemas import CloseRecord, IntegrityReport, MetricsPayload
+from .services.backtest_app_service import compare_backtest_runs, list_backtest_pairs, list_backtest_runs, list_backtest_strategies, load_latest_backtest_artifact
+from .services.backtest_app_service import run_freqtrade_backtest_and_publish
 from .services.journal_app_service import JournalAppService
 from .storage import (
     count_journal_entries,
@@ -1050,28 +1053,36 @@ def _decorate_journal_rows(rows: List[Dict[str, Any]], allow_network_hints: bool
 def _summarize_journal_rows(rows: List[Dict[str, Any]]) -> Dict[str, Any]:
     fills = len(rows)
     total_size = 0.0
+    non_estimated_total_size = 0.0
     total_commission = 0.0
     total_fees = 0.0
     pnl_values: List[float] = []
+    non_estimated_pnl_values: List[float] = []
 
     for row in rows:
-        total_size += _safe_float(row.get("size_boks"), 0.0)
+        row_size = _safe_float(row.get("size_boks"), 0.0)
+        total_size += row_size
+        is_estimated = str(row.get("finalization_state", "") or "").upper() == "ESTIMATED"
+        if not is_estimated:
+            non_estimated_total_size += row_size
         total_commission += _safe_float(row.get("commission"), 0.0)
         total_fees += _safe_float(row.get("fees"), 0.0)
         display_pnl = _first_float_optional(row, ["display_realized_pnl", "realized_pnl", "estimated_realized_pnl"])
         if display_pnl is not None:
             pnl_values.append(display_pnl)
+            if not is_estimated:
+                non_estimated_pnl_values.append(display_pnl)
 
-    gross = float(sum(pnl_values)) if pnl_values else 0.0
-    best = float(max(pnl_values)) if pnl_values else 0.0
-    worst = float(min(pnl_values)) if pnl_values else 0.0
+    gross = float(sum(non_estimated_pnl_values)) if non_estimated_pnl_values else 0.0
+    best = float(max(non_estimated_pnl_values)) if non_estimated_pnl_values else 0.0
+    worst = float(min(non_estimated_pnl_values)) if non_estimated_pnl_values else 0.0
     wins = sum(1 for v in pnl_values if v > 0)
     losses = sum(1 for v in pnl_values if v < 0)
 
     return {
         "fills": int(fills),
-        "qty": float(total_size),
-        "size_boks": float(total_size),
+        "qty": float(non_estimated_total_size),
+        "size_boks": float(non_estimated_total_size),
         "gross": float(gross),
         "commission": float(total_commission),
         "fees": float(total_fees),
@@ -1239,6 +1250,11 @@ def strategy_summary_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("strategy_summary.html", {"request": request})
 
 
+@app.get("/backtest", response_class=HTMLResponse)
+def backtest_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("backtest.html", {"request": request})
+
+
 @app.get("/fredtrade-migration-report", response_class=HTMLResponse)
 def fredtrade_migration_report_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("fredtrade_migration_report.html", {"request": request})
@@ -1355,6 +1371,99 @@ def trade_history() -> Dict[str, Any]:
 def pnl_history() -> Dict[str, Any]:
     curve = get_equity_curve(DB_PATH, limit=1000)
     return {"items": curve}
+
+
+@app.get("/api/backtest/latest")
+def backtest_latest() -> Dict[str, Any]:
+    try:
+        payload = load_latest_backtest_artifact()
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return payload
+
+
+@app.get("/api/backtest/runs")
+def backtest_runs(
+    limit: int = Query(30, ge=1, le=200),
+    timeframe: str = Query(""),
+    timerange: str = Query(""),
+    strategy: str = Query(""),
+    pair: str = Query(""),
+    q: str = Query(""),
+) -> Dict[str, Any]:
+    return {
+        "items": list_backtest_runs(
+            limit=limit,
+            timeframe=timeframe,
+            timerange=timerange,
+            strategy=strategy,
+            pair=pair,
+            label_query=q,
+        )
+    }
+
+
+@app.get("/api/backtest/compare")
+def backtest_compare(base_id: str = Query(...), candidate_id: str = Query(...)) -> Dict[str, Any]:
+    try:
+        payload = compare_backtest_runs(base_id=base_id, candidate_id=candidate_id)
+    except FileNotFoundError as exc:
+        raise HTTPException(status_code=404, detail=str(exc))
+    except ValueError as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+    return payload
+
+
+@app.get("/api/backtest/strategies")
+def backtest_strategies() -> Dict[str, Any]:
+    return {"items": list_backtest_strategies()}
+
+
+@app.get("/api/backtest/pairs")
+def backtest_pairs() -> Dict[str, Any]:
+    return {"items": list_backtest_pairs()}
+
+
+@app.post("/api/backtest/run")
+def backtest_run(payload: Dict[str, Any] = Body(default_factory=dict)) -> Dict[str, Any]:
+    strategy = str(payload.get("strategy", "BoktoshiMa50SolStrategy"))
+    pair = str(payload.get("pair", "SOL/USDT:USDT"))
+    timeframe = str(payload.get("timeframe", "4h"))
+    timerange = str(payload.get("timerange", "20240308-"))
+    label = str(payload.get("label", "")).strip()
+    timeout_sec = int(payload.get("timeout_sec", 1200) or 1200)
+
+    try:
+        result = run_freqtrade_backtest_and_publish(
+            strategy=strategy,
+            pair=pair,
+            timeframe=timeframe,
+            timerange=timerange,
+            label=label,
+            timeout_sec=timeout_sec,
+        )
+    except subprocess.CalledProcessError as exc:
+        stderr_tail = str(exc.stderr or "")[-1200:]
+        stdout_tail = str(exc.stdout or "")[-1200:]
+        raise HTTPException(
+            status_code=500,
+            detail={
+                "message": "Freqtrade command failed",
+                "returncode": int(exc.returncode),
+                "stdout_tail": stdout_tail,
+                "stderr_tail": stderr_tail,
+            },
+        )
+    except subprocess.TimeoutExpired:
+        raise HTTPException(status_code=504, detail="Backtest run timed out")
+    except (FileNotFoundError, ValueError) as exc:
+        raise HTTPException(status_code=400, detail=str(exc))
+    except Exception as exc:
+        raise HTTPException(status_code=500, detail=str(exc))
+
+    return result
 
 
 @app.get("/api/journal")

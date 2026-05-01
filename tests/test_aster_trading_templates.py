@@ -46,11 +46,35 @@ def test_aster_simple_trading_template_has_quick_close_buttons():
     assert "Close Selected Symbol" in html
     assert "Close All Positions" in html
     assert "POSITION SETTINGS" in html
+    assert "ACCOUNT OVERVIEW" in html
+    assert "Recent snapshots (last 5)" in html
+    assert "1% Stoploss (auto from account risk)" in html
+    assert "TP RR 1:3" in html
+    assert 'id="cfg-tp-rr-enabled"' in html
+    assert "Estimate Side" in html
+    assert "LONG (BUY)" in html
+    assert "SHORT (SELL)" in html
+    assert "Manual SL, Auto the Rest" in html
+    assert "Normal Flow Settings" in html
+    assert "Manual SL Price" in html
+    assert "% Risk on Total Capital" in html
+    assert "SL Price % from entry price" in html
+    assert "upnl-pos" in html
+    assert "upnl-neg" in html
+    assert "Trigger/Price" in html
+    assert "Qty/Mode" in html
+    assert "orderTypeBadge(" in html
+    assert "Close-All" in html
+    assert 'id="submit-status"' in html
+    assert "orderInFlight" in html
+    assert "Submitting..." in html
     assert "Order Type" not in html
     assert "Limit Price" not in html
     assert "Structured response view" in html
     assert "Show Raw JSON" in html
     assert '/static/theme.js' in html
+    assert "marginBadge(" in html
+    assert "setInterval(() => refreshAccount().catch(() => {}), 10000);" in html
 
 
 def test_theme_js_supports_aster_theme_option():

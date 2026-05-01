@@ -52,7 +52,9 @@
       .links { display: flex; gap: 10px; flex-wrap: wrap; }
       .links a { color: var(--muted); text-decoration: none; border: 1px solid var(--line); border-radius: 7px; padding: 7px 10px; }
       .links a.active { color: var(--text); border-color: var(--gold); }
-      .grid-top { margin-top: 14px; display: grid; grid-template-columns: repeat(3, minmax(0, 1fr)); gap: 12px; }
+      .links a[href="/aster-trading"].active { color: #ffe3a8; border-color: #d8b77a; box-shadow: inset 0 0 0 1px rgba(216, 183, 122, 0.22); }
+      .links a[href="/aster-simple-trading"].active { color: #ffd2a0; border-color: #e29a4b; box-shadow: inset 0 0 0 1px rgba(226, 154, 75, 0.22); }
+      .grid-top { margin-top: 14px; display: grid; grid-template-columns: repeat(4, minmax(0, 1fr)); gap: 12px; }
       .grid-bottom { margin-top: 12px; display: grid; grid-template-columns: repeat(2, minmax(0, 1fr)); gap: 12px; }
       .card {
         border: 1px solid var(--line);
@@ -64,6 +66,9 @@
       .card h3 { margin: 0 0 10px; color: var(--teal); letter-spacing: .4px; }
       .field { display: grid; grid-template-columns: 1.1fr 1fr; gap: 10px; margin: 8px 0; align-items: center; }
       .field label { color: var(--muted); font-size: 14px; }
+      .checkline { display: flex; align-items: center; gap: 10px; margin: 8px 0; }
+      .checkline input { width: 20px; height: 20px; }
+      .checkline label { color: var(--text); font-size: 15px; }
       input, select {
         width: 100%;
         border: 1px solid var(--line);
@@ -86,13 +91,61 @@
       .btn-close { background: var(--danger); color: #111; }
       .btn-close-all { background: #f0be58; color: #111; }
       .btn-refresh { background: #3a3a3a; color: var(--text); }
+      .btn:disabled { opacity: 0.62; cursor: not-allowed; }
       .action-row { display: grid; gap: 9px; margin-top: 10px; }
       .muted { color: var(--muted); }
+      .preview-note-strong { color: var(--gold); font-weight: 700; }
+      .submit-status { margin-top: 8px; font-weight: 700; }
+      .submit-status.idle { color: var(--muted); font-weight: 500; }
+      .submit-status.busy { color: #ffd06b; }
+      .submit-status.ok { color: #9be6b4; }
+      .submit-status.err { color: #ff8f84; }
       .table-wrap { overflow: auto; max-height: 370px; border: 1px solid var(--line); border-radius: 9px; }
       table { width: 100%; border-collapse: collapse; font-size: 13px; }
       th, td { border-bottom: 1px solid #262626; padding: 8px 7px; text-align: left; }
       th { color: var(--muted); }
       .mono { border: 1px solid var(--line); border-radius: 9px; background: #151515; min-height: 280px; max-height: 500px; overflow: auto; padding: 10px; font-family: ui-monospace, Menlo, monospace; font-size: 12px; }
+      .kv-grid { display: grid; grid-template-columns: 1fr; gap: 6px; margin-top: 6px; }
+      .kv-row { display: flex; justify-content: space-between; gap: 8px; padding: 6px 0; border-bottom: 1px solid #262626; }
+      .kv-row:last-child { border-bottom: 0; }
+      .kv-k { color: var(--muted); }
+      .value-pos { color: #98e7b2; }
+      .value-neg { color: #ffb2a4; }
+      .value-warn { color: #ffd06b; }
+      .value-risk { color: #ff9f8d; }
+      .est-sl-risk { color: #ff8f84; font-weight: 700; }
+      .est-tp-target { color: #9be6b4; font-weight: 700; }
+      .entry-est-strong { color: #e0b25a; font-weight: 700; }
+      .badge {
+        display: inline-block;
+        font-size: 11px;
+        line-height: 1;
+        padding: 4px 7px;
+        border-radius: 999px;
+        font-weight: 700;
+        margin-left: 6px;
+        border: 1px solid transparent;
+      }
+      .badge-safe { background: rgba(121, 205, 185, 0.18); color: #9de4d2; border-color: rgba(121, 205, 185, 0.45); }
+      .badge-warn { background: rgba(255, 208, 107, 0.15); color: #ffd06b; border-color: rgba(255, 208, 107, 0.45); }
+      .badge-risk { background: rgba(224, 125, 109, 0.16); color: #ffb6a8; border-color: rgba(224, 125, 109, 0.45); }
+      .history-panel {
+        margin-top: 10px;
+        border-top: 1px solid #252525;
+        padding-top: 8px;
+      }
+      .history-list { display: grid; grid-template-columns: 1fr; gap: 6px; }
+      .history-item {
+        display: grid;
+        grid-template-columns: 1fr auto auto auto;
+        gap: 8px;
+        align-items: center;
+        border: 1px solid #2a2a2a;
+        border-radius: 8px;
+        padding: 6px 8px;
+        background: #171717;
+      }
+      .history-time { color: var(--muted); font-size: 12px; }
       .resp-controls { display: flex; justify-content: space-between; gap: 8px; margin-bottom: 8px; }
       .resp-summary { border: 1px solid var(--line); border-radius: 8px; background: #171717; padding: 9px; margin-bottom: 8px; display: grid; grid-template-columns: 1fr; }
       .resp-row { display: flex; justify-content: space-between; gap: 8px; padding: 4px 0; border-bottom: 1px solid #252525; }
@@ -108,6 +161,8 @@
       }
       .side-long { background: rgba(110, 198, 176, 0.18); color: #9de4d2; }
       .side-short { background: rgba(217, 111, 88, 0.2); color: #ffb6a8; }
+      .upnl-pos { color: #9be6b4; font-weight: 700; }
+      .upnl-neg { color: #ff8f84; font-weight: 700; }
       .selected-row td:first-child { border-left: 2px solid var(--teal); }
       .selected-row td { background: rgba(130, 210, 202, 0.12); }
       @media (max-width: 1220px) {
@@ -149,6 +204,7 @@
         <div class="links">
           <a href="/">Dashboard</a>
           <a href="/manual">Position Management</a>
+          <a href="/backtest">Backtest</a>
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
           <a href="/aster-simple-trading" class="active">AsterSimpleTrading</a>
@@ -159,25 +215,39 @@
         <div class="card">
           <h3>POSITION SETTINGS</h3>
           <p class="muted">Settings here are only for AsterSimpleTrading quick actions.</p>
-          <div class="field"><label>Margin (USDT)</label><input id="cfg-margin" type="number" min="1" step="0.1" value="80" /></div>
-          <div class="field"><label>Leverage (x)</label><input id="cfg-leverage" type="number" min="1" max="125" value="5" /></div>
-          <div class="field"><label>Stoploss (%)</label><input id="cfg-sl" type="number" min="0.01" step="0.01" value="5" /></div>
+          <div class="field"><label>Settings Mode</label><select id="cfg-settings-mode"><option value="normal">Normal Flow Settings</option><option value="manual_sl_auto_rest">Manual SL, Auto the Rest</option></select></div>
+          <div id="normal-flow-section">
+            <div class="field"><label>Margin (USDT)</label><input id="cfg-margin" type="number" min="1" step="0.1" value="80" /></div>
+            <div class="field"><label>Leverage (x)</label><input id="cfg-leverage" type="number" min="1" max="125" value="5" /></div>
+            <div class="field"><label>Stoploss (%)</label><input id="cfg-sl" type="number" min="0.01" step="0.01" value="5" /></div>
+            <div class="checkline"><input id="cfg-auto-1pct" type="checkbox" /><label for="cfg-auto-1pct">1% Stoploss (auto from account risk)</label></div>
+          </div>
+          <div id="manual-sl-auto-section" style="display:none;">
+            <div class="field"><label>Manual SL Price</label><input id="cfg-manual-sl-price" type="number" min="0" step="0.0001" value="0" /></div>
+            <div class="field"><label>% Risk on Total Capital</label><input id="cfg-risk-pct-total" type="number" min="0.01" max="5" step="0.01" value="1" /></div>
+            <p id="manual-auto-meta" class="muted" style="margin:4px 0 0;">Auto leverage range: x3 to x6 (computed from remaining slots).</p>
+          </div>
           <div class="field"><label>Take Profit (%)</label><input id="cfg-tp" type="number" min="0" step="0.01" value="15" /></div>
+          <div class="field"><label style="color:var(--text)"><input id="cfg-tp-rr-enabled" type="checkbox" style="width:18px;height:18px;vertical-align:middle;margin-right:8px;" />Take Profit Mode</label><select id="cfg-tp-mode"><option value="manual">Manual %</option><option value="rr-2">TP RR 1:2</option><option value="rr-3" selected>TP RR 1:3</option><option value="rr-4">TP RR 1:4</option></select></div>
+          <div class="field"><label>Estimate Side</label><select id="cfg-estimate-side"><option value="BUY">LONG (BUY)</option><option value="SELL">SHORT (SELL)</option></select></div>
           <div class="field"><label>Dry Run</label><select id="cfg-dryrun"><option value="true">true</option><option value="false">false</option></select></div>
+          <p id="position-estimate" class="muted" style="margin:6px 0 4px;">Estimated Position Size: 400 USDT | Est. SL Risk: 20 USDT | Est. TP: 60 USDT | SL Price: - | TP Price: -</p>
+          <p id="entry-price-info" class="muted" style="margin:0;color:var(--text);"><span class="entry-est-strong">Estimated Entry Price: -</span></p>
+          <p id="sl-distance-info" class="muted" style="margin:0 0 8px;color:var(--text);">SL Price % from entry price: -</p>
           <button id="btn-save-settings" class="btn btn-save" type="button">Save Position Settings</button>
         </div>
 
         <div class="card">
           <h3>MANUAL TRADE PANEL</h3>
           <div class="field"><label>Open Symbol</label><select id="f-symbol"></select></div>
-          <div class="field"><label>1% Stoploss Auto</label><select id="f-auto1"><option value="false">false</option><option value="true">true</option></select></div>
-          <p class="muted" style="margin:4px 0 0;">When enabled, risk target is 1% of account equity per order.</p>
+          <p class="muted" style="margin:4px 0 0;">Open quick LONG/SHORT with Position Settings from left panel.</p>
           <div class="action-row">
             <button id="btn-open-long" class="btn btn-long" type="button">OPEN LONG</button>
             <button id="btn-open-short" class="btn btn-short" type="button">OPEN SHORT</button>
             <button id="btn-preview" class="btn btn-refresh" type="button">Preview Current Settings</button>
           </div>
-          <p id="preview-note" class="muted">Preview: idle</p>
+          <p id="preview-note" class="preview-note-strong">Preview: idle</p>
+          <p id="submit-status" class="submit-status idle">Order status: idle</p>
         </div>
 
         <div class="card">
@@ -189,7 +259,17 @@
             <button id="btn-close-all" class="btn btn-close-all" type="button">Close All Positions</button>
             <button id="btn-refresh-account" class="btn btn-refresh" type="button">Refresh Account Snapshot</button>
           </div>
-          <div id="account-box" class="muted" style="margin-top:10px; line-height:1.6;">Account snapshot not loaded yet.</div>
+          <div id="close-note" class="muted" style="margin-top:10px; line-height:1.6;">Use quick close actions above.</div>
+        </div>
+
+        <div class="card">
+          <h3>ACCOUNT OVERVIEW</h3>
+          <p class="muted">Realtime account snapshot for quick risk check.</p>
+          <div id="account-box" class="kv-grid muted">Account snapshot not loaded yet.</div>
+          <div class="history-panel">
+            <div class="muted" style="margin-bottom:6px;">Recent snapshots (last 5)</div>
+            <div id="account-history" class="history-list muted">No snapshot history yet.</div>
+          </div>
         </div>
       </section>
 
@@ -216,7 +296,11 @@
     <script>
       const money = (n, max = 4) => Number(n || 0).toLocaleString('en-US', { maximumFractionDigits: max });
       const SETTINGS_KEY = 'aster_simple_position_settings_v1';
+      const ACCOUNT_HISTORY_LIMIT = 5;
       let resultRawVisible = false;
+      const accountSnapshots = [];
+      let orderInFlight = false;
+      let orderCooldownUntil = 0;
 
       async function fetchJson(path, options = {}) {
         const res = await fetch(path, options);
@@ -238,6 +322,98 @@
 
       function summaryRow(k, v) {
         return `<div class="resp-row"><span class="resp-k">${esc(k)}</span><strong>${esc(v)}</strong></div>`;
+      }
+
+      function renderEstimateLine({ notional, slRisk, tpTarget, stopPrice = '-', takeProfitPrice = '-', slMode, tpMode, previewUnavailable = false }) {
+        const unavailableNote = previewUnavailable ? ' <span class="muted">(preview unavailable)</span>' : '';
+        return `Estimated Position Size: ${money(notional, 2)} USDT | <span class="est-sl-risk">Est. SL Risk: ${money(slRisk, 2)} USDT</span> | <span class="est-tp-target">Est. TP: ${money(tpTarget, 2)} USDT</span> | SL Price: ${stopPrice} | TP Price: ${takeProfitPrice} | SL mode: ${slMode} | TP mode: ${tpMode}${unavailableNote}`;
+      }
+
+      function renderSlDistanceInfo(entryPrice, pct, previewUnavailable = false) {
+        const entryText = Number.isFinite(Number(entryPrice)) && Number(entryPrice) > 0 ? money(entryPrice) : '-';
+        const pctText = Number.isFinite(Number(pct)) ? `${Number(pct).toFixed(3)}%` : '-';
+        const note = previewUnavailable ? ' (preview unavailable)' : '';
+        return {
+          entryHtml: `<span class="entry-est-strong">Estimated Entry Price: ${entryText}</span>${note}`,
+          slText: `SL Price % from entry price: ${pctText}${note}`,
+        };
+      }
+
+      function kvRow(k, v) {
+        return `<div class="kv-row"><span class="kv-k">${esc(k)}</span><strong>${v}</strong></div>`;
+      }
+
+      function fmtTs(ts) {
+        const d = new Date(Number(ts || Date.now()));
+        return d.toLocaleTimeString('en-US', { hour12: false });
+      }
+
+      function colorValue(value, digits = 2, suffix = '') {
+        const num = Number(value || 0);
+        const cls = num >= 0 ? 'value-pos' : 'value-neg';
+        const sign = num > 0 ? '+' : '';
+        return `<span class="${cls}">${sign}${money(num, digits)}${suffix}</span>`;
+      }
+
+      function marginBadge(ratioPct) {
+        const ratio = Number(ratioPct || 0);
+        if (ratio >= 60) return '<span class="badge badge-risk">RISK</span>';
+        if (ratio >= 35) return '<span class="badge badge-warn">WATCH</span>';
+        return '<span class="badge badge-safe">SAFE</span>';
+      }
+
+      function ratioStyled(ratioPct) {
+        const ratio = Number(ratioPct || 0);
+        const cls = ratio >= 60 ? 'value-risk' : (ratio >= 35 ? 'value-warn' : 'value-pos');
+        return `<span class="${cls}">${ratio.toFixed(2)}%</span>${marginBadge(ratio)}`;
+      }
+
+      function renderAccountHistory() {
+        const box = document.getElementById('account-history');
+        if (!accountSnapshots.length) {
+          box.innerHTML = 'No snapshot history yet.';
+          return;
+        }
+        box.innerHTML = accountSnapshots.map((row) => {
+          return `<div class="history-item"><span class="history-time">${esc(fmtTs(row.ts))}</span><strong>${money(row.equity, 2)} USDT</strong><span>${colorValue(row.upnl, 2, ' USDT')}</span><span>${ratioStyled(row.ratioPct)}</span></div>`;
+        }).join('');
+      }
+
+      function setSubmitStatus(kind, text) {
+        const el = document.getElementById('submit-status');
+        el.className = `submit-status ${kind}`;
+        el.textContent = text;
+      }
+
+      function submitContext(side) {
+        const symbol = document.getElementById('f-symbol').value || '-';
+        const sideText = String(side || '').toUpperCase() === 'SELL' ? 'SHORT' : 'LONG';
+        return `${symbol} ${sideText}`;
+      }
+
+      function setOrderButtonsDisabled(disabled, label = '') {
+        const longBtn = document.getElementById('btn-open-long');
+        const shortBtn = document.getElementById('btn-open-short');
+        if (disabled) {
+          longBtn.dataset.prevText = longBtn.dataset.prevText || longBtn.textContent;
+          shortBtn.dataset.prevText = shortBtn.dataset.prevText || shortBtn.textContent;
+          if (label) {
+            longBtn.textContent = label;
+            shortBtn.textContent = label;
+          }
+        } else {
+          longBtn.textContent = longBtn.dataset.prevText || 'OPEN LONG';
+          shortBtn.textContent = shortBtn.dataset.prevText || 'OPEN SHORT';
+        }
+        longBtn.disabled = disabled;
+        shortBtn.disabled = disabled;
+      }
+
+      function canSubmitOrder() {
+        const now = Date.now();
+        if (orderInFlight) return false;
+        if (orderCooldownUntil > now) return false;
+        return true;
       }
 
       function logResult(data) {
@@ -280,22 +456,171 @@
         return `<table><thead><tr>${head}</tr></thead><tbody>${body}</tbody></table>`;
       }
 
+      function orderTypeBadge(type) {
+        const t = String(type || '').toUpperCase();
+        if (t === 'STOP_MARKET') return '<span class="side-chip side-short">SL</span>';
+        if (t === 'TAKE_PROFIT_MARKET') return '<span class="side-chip side-long">TP</span>';
+        return esc(type || '-');
+      }
+
+      function orderPriceDisplay(order) {
+        const type = String(order?.type || '').toUpperCase();
+        if (type === 'STOP_MARKET' || type === 'TAKE_PROFIT_MARKET') {
+          return money(order?.stopPrice || 0);
+        }
+        return money(order?.price || 0);
+      }
+
+      function orderQtyDisplay(order) {
+        const closeAll = String(order?.closePosition || '').toLowerCase() === 'true';
+        if (closeAll) return 'Close-All';
+        const q = Number(order?.origQty || 0);
+        return q > 0 ? money(q, 6) : '-';
+      }
+
       function getSettings() {
+        const settingsMode = document.getElementById('cfg-settings-mode').value || 'normal';
+        const levNormal = Number(document.getElementById('cfg-leverage').value || 5);
         return {
+          settingsMode,
           margin: Number(document.getElementById('cfg-margin').value || 80),
-          leverage: Number(document.getElementById('cfg-leverage').value || 5),
+          leverage: levNormal,
           sl: Number(document.getElementById('cfg-sl').value || 5),
+          manualSlPrice: Number(document.getElementById('cfg-manual-sl-price').value || 0),
+          riskPctTotalCapital: Number(document.getElementById('cfg-risk-pct-total').value || 1),
           tp: Number(document.getElementById('cfg-tp').value || 15),
+          auto1pct: document.getElementById('cfg-auto-1pct').checked,
+          useTpRr: document.getElementById('cfg-tp-rr-enabled').checked,
+          tpMode: document.getElementById('cfg-tp-mode').value || 'rr-3',
+          estimateSide: document.getElementById('cfg-estimate-side').value || 'BUY',
           dryrun: document.getElementById('cfg-dryrun').value === 'true',
         };
       }
 
+      function updatePositionEstimateLocal() {
+        const cfg = getSettings();
+        const margin = cfg.settingsMode === 'manual_sl_auto_rest' ? 0 : Math.max(Number(cfg.margin || 0), 0);
+        const leverage = Math.max(Number(cfg.leverage || 0), 0);
+        const slPct = cfg.settingsMode === 'manual_sl_auto_rest' ? 0 : (Math.max(Number(cfg.sl || 0), 0) / 100);
+        const tpPctManual = Math.max(Number(cfg.tp || 0), 0) / 100;
+        const rr = Number(String(cfg.tpMode || '').replace('rr-', '') || 3);
+        const tpPct = cfg.useTpRr ? (slPct * rr) : tpPctManual;
+        const notional = margin * leverage;
+        const slRisk = notional * slPct;
+        const tpTarget = notional * tpPct;
+        const slMode = cfg.settingsMode === 'manual_sl_auto_rest' ? 'MANUAL SL PRICE' : (cfg.auto1pct ? 'AUTO 1%' : 'MANUAL %');
+        const tpModeLabel = cfg.useTpRr ? `RR 1:${rr}` : 'MANUAL %';
+        document.getElementById('position-estimate').innerHTML = renderEstimateLine({
+          notional,
+          slRisk,
+          tpTarget,
+          stopPrice: '-',
+          takeProfitPrice: '-',
+          slMode,
+          tpMode: tpModeLabel,
+          previewUnavailable: false,
+        });
+        const dist = renderSlDistanceInfo(NaN, slPct * 100, true);
+        document.getElementById('entry-price-info').innerHTML = dist.entryHtml;
+        document.getElementById('sl-distance-info').textContent = dist.slText;
+        if (cfg.settingsMode === 'manual_sl_auto_rest') {
+          document.getElementById('manual-auto-meta').textContent = 'Auto leverage range: x3 to x6 (computed from remaining slots).';
+        }
+      }
+
+      async function updatePositionEstimateFromPreview() {
+        const cfg = getSettings();
+        const payload = buildEstimatePayload();
+        try {
+          const p = await fetchJson('/api/aster-trading/order-preview', {
+            method: 'POST',
+            headers: { 'Content-Type': 'application/json' },
+            body: JSON.stringify(payload),
+          });
+          const rr = Number(String(cfg.tpMode || '').replace('rr-', '') || 3);
+          const slMode = cfg.auto1pct ? 'AUTO 1%' : 'MANUAL %';
+          const tpModeLabel = cfg.useTpRr ? `RR 1:${rr}` : 'MANUAL %';
+          document.getElementById('position-estimate').innerHTML = renderEstimateLine({
+            notional: Number(p.notional_usdt || 0),
+            slRisk: Number(p.risk_usdt || 0),
+            tpTarget: Number(p.notional_usdt || 0) * Number(p.take_profit_pct || 0),
+            stopPrice: money(p.stop_price),
+            takeProfitPrice: money(p.take_profit_price),
+            slMode,
+            tpMode: tpModeLabel,
+            previewUnavailable: false,
+          });
+          const dist = renderSlDistanceInfo(Number(p.entry_price || 0), Number(p.stop_loss_pct || 0) * 100, false);
+          document.getElementById('entry-price-info').innerHTML = dist.entryHtml;
+          document.getElementById('sl-distance-info').textContent = dist.slText;
+          document.getElementById('preview-note').textContent = `Preview ${p.symbol}: Entry ${money(p.entry_price)} | Qty ${money(p.quantity, 6)} | Margin ${money(p.margin_usdt, 2)} | SL ${money(p.stop_price)}`;
+          if (cfg.settingsMode === 'manual_sl_auto_rest') {
+            const rt = p.manual_auto_runtime || {};
+            const levChosen = Number(rt.leverage_chosen || p.leverage || 0);
+            const slots = `${Number(rt.open_positions_count || 0)}/${Number((p.manual_auto_limits || {}).max_positions || 3)}`;
+            const remain = Number(rt.remaining_slots || 0);
+            const budget = Number(rt.margin_budget_per_slot || 0);
+            document.getElementById('manual-auto-meta').textContent = `Auto leverage chosen: x${levChosen} | Open slots: ${slots} | Remaining: ${remain} | Budget/slot: ${money(budget, 2)} USDT`;
+          }
+        } catch (_) {
+          const cfg2 = getSettings();
+          const margin2 = Math.max(Number(cfg2.margin || 0), 0);
+          const leverage2 = Math.max(Number(cfg2.leverage || 0), 0);
+          const slPct2 = Math.max(Number(cfg2.sl || 0), 0) / 100;
+          const rr2 = Number(String(cfg2.tpMode || '').replace('rr-', '') || 3);
+          const tpPct2 = cfg2.useTpRr ? (slPct2 * rr2) : (Math.max(Number(cfg2.tp || 0), 0) / 100);
+          const slMode2 = cfg2.auto1pct ? 'AUTO 1%' : 'MANUAL %';
+          const tpModeLabel2 = cfg2.useTpRr ? `RR 1:${rr2}` : 'MANUAL %';
+          document.getElementById('position-estimate').innerHTML = renderEstimateLine({
+            notional: margin2 * leverage2,
+            slRisk: margin2 * leverage2 * slPct2,
+            tpTarget: margin2 * leverage2 * tpPct2,
+            stopPrice: '-',
+            takeProfitPrice: '-',
+            slMode: slMode2,
+            tpMode: tpModeLabel2,
+            previewUnavailable: true,
+          });
+          const dist = renderSlDistanceInfo(NaN, slPct2 * 100, true);
+          document.getElementById('entry-price-info').innerHTML = dist.entryHtml;
+          document.getElementById('sl-distance-info').textContent = dist.slText;
+          document.getElementById('preview-note').textContent = 'Preview: unavailable';
+          if (cfg2.settingsMode === 'manual_sl_auto_rest') {
+            document.getElementById('manual-auto-meta').textContent = 'Auto leverage unavailable: preview failed.';
+          }
+        }
+      }
+
+      function applyModeLocks() {
+        const settingsMode = document.getElementById('cfg-settings-mode').value || 'normal';
+        const auto1 = document.getElementById('cfg-auto-1pct').checked;
+        const useTpRr = document.getElementById('cfg-tp-rr-enabled').checked;
+        const slInput = document.getElementById('cfg-sl');
+        const tpInput = document.getElementById('cfg-tp');
+        const tpModeInput = document.getElementById('cfg-tp-mode');
+        document.getElementById('normal-flow-section').style.display = settingsMode === 'normal' ? 'block' : 'none';
+        document.getElementById('manual-sl-auto-section').style.display = settingsMode === 'manual_sl_auto_rest' ? 'block' : 'none';
+        slInput.disabled = auto1 || settingsMode !== 'normal';
+        tpInput.disabled = useTpRr;
+        tpModeInput.disabled = !useTpRr;
+      }
+
       function applySettings(settings) {
+        document.getElementById('cfg-settings-mode').value = settings.settingsMode || 'normal';
         document.getElementById('cfg-margin').value = settings.margin ?? 80;
         document.getElementById('cfg-leverage').value = settings.leverage ?? 5;
         document.getElementById('cfg-sl').value = settings.sl ?? 5;
+        document.getElementById('cfg-manual-sl-price').value = settings.manualSlPrice ?? 0;
+        document.getElementById('cfg-risk-pct-total').value = settings.riskPctTotalCapital ?? 1;
         document.getElementById('cfg-tp').value = settings.tp ?? 15;
+        document.getElementById('cfg-auto-1pct').checked = Boolean(settings.auto1pct);
+        document.getElementById('cfg-tp-rr-enabled').checked = Boolean(settings.useTpRr);
+        document.getElementById('cfg-tp-mode').value = settings.tpMode || 'rr-3';
+        document.getElementById('cfg-estimate-side').value = settings.estimateSide || 'BUY';
         document.getElementById('cfg-dryrun').value = settings.dryrun ? 'true' : 'false';
+        applyModeLocks();
+        updatePositionEstimateLocal();
+        updatePositionEstimateFromPreview();
       }
 
       function loadLocalSettings() {
@@ -310,6 +635,8 @@
       function saveLocalSettings() {
         const settings = getSettings();
         localStorage.setItem(SETTINGS_KEY, JSON.stringify(settings));
+        updatePositionEstimateLocal();
+        updatePositionEstimateFromPreview();
         logResult({ success: true, message: 'Position settings saved to browser localStorage.', settings });
       }
 
@@ -329,9 +656,10 @@
         const cfg = getSettings();
         const leverage = Number(cfg.leverage || 5);
         const margin = Number(cfg.margin || 80);
-        return {
+        const payload = {
           symbol: document.getElementById('f-symbol').value,
           side,
+          settings_mode: cfg.settingsMode,
           order_type: 'MARKET',
           price: 0,
           leverage,
@@ -339,39 +667,113 @@
           notional_usdt: leverage * margin,
           stop_loss_pct: Number(cfg.sl || 5) / 100,
           take_profit_pct: Number(cfg.tp || 15) / 100,
-          auto_stoploss_1pct: document.getElementById('f-auto1').value === 'true',
+          auto_stoploss_1pct: Boolean(cfg.auto1pct),
+          tp_mode: cfg.useTpRr ? 'rr' : 'manual',
+          tp_rr: Number(String(cfg.tpMode || '').replace('rr-', '') || 3),
           enable_tpsl: true,
           dry_run: cfg.dryrun,
         };
+        if (cfg.settingsMode === 'manual_sl_auto_rest') {
+          payload.margin_usdt = 0;
+          payload.notional_usdt = 0;
+          payload.auto_stoploss_1pct = false;
+          payload.manual_sl_price = Number(cfg.manualSlPrice || 0);
+          payload.risk_pct_total_capital = Number(cfg.riskPctTotalCapital || 0);
+        }
+        return payload;
+      }
+
+      function buildEstimatePayload() {
+        const cfg = getSettings();
+        return buildOrderPayload(cfg.estimateSide || 'BUY');
       }
 
       async function previewSettings() {
-        const payload = buildOrderPayload('BUY');
+        const payload = buildEstimatePayload();
         const preview = await fetchJson('/api/aster-trading/order-preview', {
           method: 'POST',
           headers: { 'Content-Type': 'application/json' },
           body: JSON.stringify(payload),
         });
         document.getElementById('preview-note').textContent = `Preview ${preview.symbol}: Entry ${money(preview.entry_price)} | Qty ${money(preview.quantity, 6)} | Margin ${money(preview.margin_usdt, 2)} | SL ${money(preview.stop_price)}`;
+        const cfg = getSettings();
+        const rr = Number(String(cfg.tpMode || '').replace('rr-', '') || 3);
+        const slMode = cfg.auto1pct ? 'AUTO 1%' : 'MANUAL %';
+        const tpModeLabel = cfg.useTpRr ? `RR 1:${rr}` : 'MANUAL %';
+        document.getElementById('position-estimate').innerHTML = renderEstimateLine({
+          notional: Number(preview.notional_usdt || 0),
+          slRisk: Number(preview.risk_usdt || 0),
+          tpTarget: Number(preview.notional_usdt || 0) * Number(preview.take_profit_pct || 0),
+          stopPrice: money(preview.stop_price),
+          takeProfitPrice: money(preview.take_profit_price),
+          slMode,
+          tpMode: tpModeLabel,
+          previewUnavailable: false,
+        });
+        const dist = renderSlDistanceInfo(Number(preview.entry_price || 0), Number(preview.stop_loss_pct || 0) * 100, false);
+        document.getElementById('entry-price-info').innerHTML = dist.entryHtml;
+        document.getElementById('sl-distance-info').textContent = dist.slText;
         logResult(preview);
       }
 
       async function openLong() {
+        if (!canSubmitOrder()) return;
+        orderInFlight = true;
+        setOrderButtonsDisabled(true, 'Submitting...');
+        const ctx = submitContext('BUY');
+        setSubmitStatus('busy', `Order status: submitting ${ctx}...`);
         const payload = buildOrderPayload('BUY');
-        const res = await fetchJson('/api/aster-trading/place-order', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-        });
-        logResult(res);
-        await refreshRealtime();
+        try {
+          const res = await fetchJson('/api/aster-trading/place-order', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+          });
+          logResult(res);
+          if (res && res.success === false) {
+            setSubmitStatus('err', `Order status: failed - ${res.message || 'request rejected'}`);
+          } else {
+            const orderId = res?.results?.main_order?.orderId;
+            setSubmitStatus('ok', `Order status: ${ctx} submitted${orderId ? ` (orderId ${orderId})` : ''}.`);
+            orderCooldownUntil = Date.now() + 3000;
+          }
+          await Promise.allSettled([refreshRealtime(), refreshAccount(), previewSettings()]);
+        } catch (e) {
+          setSubmitStatus('err', `Order status: failed - ${String(e)}`);
+          throw e;
+        } finally {
+          orderInFlight = false;
+          const delay = Math.max(0, orderCooldownUntil - Date.now());
+          setTimeout(() => setOrderButtonsDisabled(false), delay);
+        }
       }
 
       async function openShort() {
+        if (!canSubmitOrder()) return;
+        orderInFlight = true;
+        setOrderButtonsDisabled(true, 'Submitting...');
+        const ctx = submitContext('SELL');
+        setSubmitStatus('busy', `Order status: submitting ${ctx}...`);
         const payload = buildOrderPayload('SELL');
-        const res = await fetchJson('/api/aster-trading/place-order', {
-          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
-        });
-        logResult(res);
-        await refreshRealtime();
+        try {
+          const res = await fetchJson('/api/aster-trading/place-order', {
+            method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
+          });
+          logResult(res);
+          if (res && res.success === false) {
+            setSubmitStatus('err', `Order status: failed - ${res.message || 'request rejected'}`);
+          } else {
+            const orderId = res?.results?.main_order?.orderId;
+            setSubmitStatus('ok', `Order status: ${ctx} submitted${orderId ? ` (orderId ${orderId})` : ''}.`);
+            orderCooldownUntil = Date.now() + 3000;
+          }
+          await Promise.allSettled([refreshRealtime(), refreshAccount(), previewSettings()]);
+        } catch (e) {
+          setSubmitStatus('err', `Order status: failed - ${String(e)}`);
+          throw e;
+        } finally {
+          orderInFlight = false;
+          const delay = Math.max(0, orderCooldownUntil - Date.now());
+          setTimeout(() => setOrderButtonsDisabled(false), delay);
+        }
       }
 
       async function closeSelectedSymbol() {
@@ -398,14 +800,29 @@
 
       async function refreshAccount() {
         const data = await fetchJson('/api/aster-trading/account-overview');
+        const eq = data.account_equity || {};
         const margin = data.margin || {};
+        const ratioPct = Number(margin.account_margin_ratio_pct || 0);
+        const upnl = Number(eq.perp_unrealized_pnl || 0);
+        const snapshot = {
+          ts: Date.now(),
+          equity: Number(margin.account_equity || 0),
+          upnl,
+          ratioPct,
+        };
+        accountSnapshots.unshift(snapshot);
+        if (accountSnapshots.length > ACCOUNT_HISTORY_LIMIT) {
+          accountSnapshots.length = ACCOUNT_HISTORY_LIMIT;
+        }
         document.getElementById('account-box').innerHTML = [
-          `Account Equity: <strong>${money(margin.account_equity, 2)} USDT</strong>`,
-          `Wallet Balance: <strong>${money(margin.wallet_balance, 2)} USDT</strong>`,
-          `Available Balance: <strong>${money(margin.available_balance, 2)} USDT</strong>`,
-          `Margin Ratio: <strong>${Number(margin.account_margin_ratio_pct || 0).toFixed(2)}%</strong>`,
-        ].join('<br/>');
-        logResult(data);
+          kvRow('Perp Total Value', `${money(eq.perp_total_value, 2)} USDT`),
+          kvRow('Unrealized PnL', `${colorValue(upnl, 2, ' USDT')}`),
+          kvRow('Account Equity', `${money(margin.account_equity, 2)} USDT`),
+          kvRow('Wallet Balance', `${money(margin.wallet_balance, 2)} USDT`),
+          kvRow('Available Balance', `${money(margin.available_balance, 2)} USDT`),
+          kvRow('Margin Ratio', ratioStyled(ratioPct)),
+        ].join('');
+        renderAccountHistory();
       }
 
       async function refreshRealtime() {
@@ -427,25 +844,63 @@
                 money(p.positionAmt, 6),
                 money(p.entryPrice),
                 money(p.markPrice),
-                money(p.unRealizedProfit),
+                `<span class="${Number(p.unRealizedProfit || 0) > 0 ? 'upnl-pos' : (Number(p.unRealizedProfit || 0) < 0 ? 'upnl-neg' : '')}">${money(p.unRealizedProfit)}</span>`,
                 `x${p.leverage || '-'}`,
               ],
             };
           }),
         );
         document.getElementById('orders-box').innerHTML = tableHtml(
-          ['Symbol', 'ID', 'Type', 'Side', 'Price', 'Qty', 'Status'],
+          ['Symbol', 'ID', 'Type', 'Side', 'Trigger/Price', 'Qty/Mode', 'Status'],
           (orders.items || []).slice(0, 100).map((o) => {
             const symbol = String(o.symbol || '-').toUpperCase();
             return {
               className: symbol === selected ? 'selected-row' : '',
-              cells: [o.symbol || '-', o.orderId, o.type, o.side, money(o.price), money(o.origQty, 6), o.status || '-'],
+              cells: [
+                o.symbol || '-',
+                o.orderId,
+                orderTypeBadge(o.type),
+                o.side || '-',
+                orderPriceDisplay(o),
+                orderQtyDisplay(o),
+                o.status || '-',
+              ],
             };
           }),
         );
       }
 
       document.getElementById('btn-save-settings').addEventListener('click', saveLocalSettings);
+      ['cfg-margin', 'cfg-leverage', 'cfg-sl', 'cfg-manual-sl-price', 'cfg-risk-pct-total', 'cfg-tp'].forEach((id) => {
+        document.getElementById(id).addEventListener('input', () => {
+          updatePositionEstimateLocal();
+          updatePositionEstimateFromPreview();
+        });
+      });
+      document.getElementById('cfg-settings-mode').addEventListener('change', () => {
+        applyModeLocks();
+        updatePositionEstimateLocal();
+        updatePositionEstimateFromPreview();
+      });
+      document.getElementById('cfg-estimate-side').addEventListener('change', () => {
+        updatePositionEstimateLocal();
+        updatePositionEstimateFromPreview();
+      });
+      document.getElementById('cfg-auto-1pct').addEventListener('change', () => {
+        applyModeLocks();
+        updatePositionEstimateLocal();
+        updatePositionEstimateFromPreview();
+      });
+      document.getElementById('cfg-tp-rr-enabled').addEventListener('change', () => {
+        applyModeLocks();
+        updatePositionEstimateLocal();
+        updatePositionEstimateFromPreview();
+      });
+      document.getElementById('cfg-tp-mode').addEventListener('change', () => {
+        applyModeLocks();
+        updatePositionEstimateLocal();
+        updatePositionEstimateFromPreview();
+      });
       document.getElementById('btn-preview').addEventListener('click', () => previewSettings().catch((e) => logResult(String(e))));
       document.getElementById('btn-open-long').addEventListener('click', () => openLong().catch((e) => logResult(String(e))));
       document.getElementById('btn-open-short').addEventListener('click', () => openShort().catch((e) => logResult(String(e))));
@@ -463,9 +918,14 @@
       });
 
       loadLocalSettings();
+      applyModeLocks();
+      updatePositionEstimateLocal();
+      updatePositionEstimateFromPreview();
       loadSymbols().then(() => previewSettings()).catch((e) => logResult(String(e)));
+      refreshAccount().catch((e) => logResult(String(e)));
       refreshRealtime().catch((e) => logResult(String(e)));
       setInterval(() => refreshRealtime().catch(() => {}), 3000);
+      setInterval(() => refreshAccount().catch(() => {}), 10000);
     </script>
     <script src="/static/theme.js"></script>
   </body>

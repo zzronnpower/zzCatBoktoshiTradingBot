@@ -63,6 +63,8 @@
         padding: 7px 10px;
       }
       .nav a.active { color: var(--text); border-color: var(--gold); }
+      .nav a[href="/aster-trading"].active { color: #ffe3a8; border-color: #d8b77a; box-shadow: inset 0 0 0 1px rgba(216, 183, 122, 0.22); }
+      .nav a[href="/aster-simple-trading"].active { color: #ffd2a0; border-color: #e29a4b; box-shadow: inset 0 0 0 1px rgba(226, 154, 75, 0.22); }
       .grid {
         display: grid;
         grid-template-columns: 1fr 1.05fr;
@@ -219,6 +221,7 @@
         <div class="nav">
           <a href="/">Dashboard</a>
           <a href="/manual">Position Management</a>
+          <a href="/backtest">Backtest</a>
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading" class="active">AsterTrading</a>
           <a href="/aster-simple-trading">AsterSimpleTrading</a>

@@ -1,6 +1,6 @@
 # PROJECT_LOG
 
-Last updated: 2026-03-02 (manual same-symbol stacking + per-order overrides)
+Last updated: 2026-03-14 (journal summary excludes estimated rows)
 Project: `zzCatBoktoshiTradingBot`
 
 ## 1) Project Intent
@@ -1752,3 +1752,572 @@ When a new assistant session starts:
     - `/api/open-positions` -> 200
     - `/api/manual/close-all-unknown-positions` -> 200
   - note: smoke POST to `close-all-unknown-positions` executed against live data and returned closed ids for current unknown positions.
+
+## 80) Backtest module MVP: SOLUSDT + Binance Futures + performance page (2026-03-08)
+
+- Implemented Backtest module foundation with roadmap/checklist trackers:
+  - `BacktestModule/ROADMAP.md`
+  - `BacktestModule/CHECKLIST.md`
+- Added backend service for backtest artifact pipeline:
+  - new file `app/services/backtest_app_service.py`
+  - supports parsing Freqtrade result from `.json` or `.zip`
+  - normalizes summary metrics, equity curve, drawdown curve, and recent trades
+  - persists latest artifact at `BacktestModule/artifacts/latest.json`
+- Added new Backtest routes in `app/main.py`:
+  - `GET /backtest`
+  - `GET /api/backtest/latest`
+- Added new UI page:
+  - `app/templates/backtest.html`
+  - KPI cards: Total PnL, Win Rate, Profit Factor, Trades, Max Drawdown, Final Balance
+  - performance charts: Equity Curve + Drawdown
+  - recent trades table
+- Navigation rollout:
+  - added `Backtest` nav link to: `index`, `manual`, `journal`, `strategy_summary`, `fredtrade_migration_report`, `eth_chart`, `aster_trading`, `aster_simple_trading`, and `chatlog` templates.
+- Added helper script:
+  - `scripts/build_backtest_artifact.py`
+  - converts Freqtrade backtest output into Boktoshi latest artifact.
+- Ran real backtest on Freqtrade workspace (`FreqTradeProject/freqtrade`):
+  - Pair: `SOL/USDT:USDT`
+  - Exchange: Binance Futures
+  - Strategy: `BoktoshiMa50SolStrategy`
+  - Timerange: `20240308-`
+  - Result snapshot: `88 trades`, `-7.63 USDT`, `-0.08%`, `Win rate 30.7%`, `Profit factor 0.93`, `Max drawdown 0.34%`.
+- Verification:
+  - `python3 -m compileall app scripts` passed.
+  - FastAPI smoke using `TestClient`:
+    - `GET /api/backtest/latest` -> 200
+    - `GET /backtest` -> 200
+  - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d --build` running (`CatBoktoshiTradingBot-dev`).
+  - live smoke:
+    - `GET /backtest` -> 200
+    - `GET /api/backtest/latest` -> 200
+
+## 81) Backtest compare mode: baseline vs candidate (2026-03-08)
+
+- Extended backtest artifact service (`app/services/backtest_app_service.py`):
+  - added run snapshot storage: `BacktestModule/artifacts/runs/*.json`.
+  - latest artifact writes now also persist timestamped run file with `artifact_id`.
+  - added run listing API model helpers.
+  - added comparison helper with summary delta metrics.
+- Added compare APIs in `app/main.py`:
+  - `GET /api/backtest/runs?limit=`
+  - `GET /api/backtest/compare?base_id=&candidate_id=`
+- Upgraded `app/templates/backtest.html`:
+  - baseline/candidate selectors + `Compare` action.
+  - side-by-side chart overlay:
+    - Equity curve (baseline blue, candidate green)
+    - Drawdown curve (baseline blue, candidate green)
+  - KPI cards now show candidate values + delta versus baseline.
+  - trade table renders candidate recent trades.
+- Upgraded artifact builder script (`scripts/build_backtest_artifact.py`):
+  - added optional `--label` for run tagging.
+  - standalone run (auto PYTHONPATH bootstrap) without manual env setup.
+- Generated first compare dataset:
+  - baseline run label: `baseline-ma50` (`BoktoshiMa50SolStrategy`)
+  - candidate run label: `candidate-ma50-v1` (`BoktoshiMa50SolCandidateStrategy`)
+  - run files:
+    - `BacktestModule/artifacts/runs/1772955955_backtest-result-2026-03-08_07-32-14.json`
+    - `BacktestModule/artifacts/runs/1772956035_backtest-result-2026-03-08_07-46-40.json`
+  - observed delta (candidate - baseline):
+    - `total_pnl_abs`: `+37.43 USDT`
+    - `profit_factor`: improved (from ~0.93 to ~1.32)
+- Verification:
+  - `python3 -m compileall app scripts` passed.
+  - TestClient smoke:
+    - `GET /api/backtest/runs` -> 200
+    - `GET /api/backtest/compare` -> 200
+    - `GET /backtest` -> 200
+  - Dev stack:
+    - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` running.
+  - live smoke:
+    - `GET /api/backtest/latest` -> 200
+    - `GET /api/backtest/runs` -> 200
+    - `GET /api/backtest/compare` -> 200
+    - `GET /backtest` -> 200
+
+## 82) Backtest filters: timeframe/timerange/strategy/query (2026-03-08)
+
+- Enhanced backtest runs API filtering in `app/services/backtest_app_service.py`:
+  - added filters for `timeframe`, `timerange`, `strategy`, `pair`, and text query (`label/artifact_id`).
+- Extended API contract in `app/main.py`:
+  - `GET /api/backtest/runs` now supports query params:
+    - `timeframe`
+    - `timerange`
+    - `strategy`
+    - `pair`
+    - `q`
+- Updated `/backtest` UI in `app/templates/backtest.html`:
+  - added filter controls:
+    - timeframe input,
+    - timerange input,
+    - strategy input,
+    - free-text search input,
+    - `Apply Filters` button.
+  - filter action reloads baseline/candidate dropdowns from filtered run list.
+- Verification:
+  - `python3 -m compileall app scripts` passed.
+  - TestClient smoke:
+    - `GET /api/backtest/runs` -> 200
+    - `GET /api/backtest/runs?timeframe=4h` -> 200
+    - `GET /api/backtest/runs?timerange=20240308-` -> 200
+    - `GET /api/backtest/runs?strategy=Candidate` -> 200
+    - `GET /backtest` -> 200
+  - Dev stack:
+    - `docker compose -f docker-compose.yml -f docker-compose.dev.yml up -d` running.
+  - live smoke:
+    - `GET /api/backtest/runs?timeframe=4h` -> 200
+    - `GET /api/backtest/runs?strategy=Candidate` -> 200
+    - `GET /backtest` -> 200
+
+## 83) Backtest strategy selector (MA50/EMA/REGIME + dynamic) (2026-03-08)
+
+- Added strategy catalog helper in `app/services/backtest_app_service.py`:
+  - `list_backtest_strategies()` reads distinct strategy names from run artifacts.
+- Added new API endpoint in `app/main.py`:
+  - `GET /api/backtest/strategies`
+- Enhanced `/backtest` page (`app/templates/backtest.html`):
+  - changed strategy filter to a selector control.
+  - includes preset families:
+    - `MA50 Family`
+    - `EMA Family`
+    - `REGIME Family`
+  - dynamically appends exact strategy names found from artifact runs.
+  - selector auto-triggers filtered run reload for baseline/candidate compare dropdowns.
+- Verification:
+  - `python3 -m compileall app scripts` passed.
+  - TestClient smoke:
+    - `GET /api/backtest/strategies` -> 200
+    - `GET /api/backtest/runs?strategy=BoktoshiMa50` -> 200
+    - `GET /backtest` -> 200
+  - live smoke:
+    - `GET /api/backtest/strategies` -> 200
+    - `GET /api/backtest/runs?strategy=BoktoshiMa50` -> 200
+    - `GET /backtest` -> 200
+
+## 84) Backtest pair selector + timerange quick presets (2026-03-08)
+
+- Added pair catalog helper in `app/services/backtest_app_service.py`:
+  - `list_backtest_pairs()` reads distinct pairs from artifact runs.
+- Added new API endpoint in `app/main.py`:
+  - `GET /api/backtest/pairs`
+- Enhanced `/backtest` UI (`app/templates/backtest.html`):
+  - added pair selector with presets (`SOL/BTC/ETH`) + dynamic pair options from artifacts.
+  - added quick timerange preset chips:
+    - `3M`, `6M`, `12M`, `YTD`, `Clear Range`
+  - clicking preset auto-fills `timerange` filter and reloads runs.
+  - pair selector auto-reloads run list for baseline/candidate compare.
+- Verification:
+  - `python3 -m compileall app scripts` passed.
+  - TestClient smoke:
+    - `GET /api/backtest/pairs` -> 200
+    - `GET /api/backtest/runs?pair=SOL/USDT:USDT` -> 200
+    - `GET /backtest` -> 200
+  - live smoke:
+    - `GET /api/backtest/pairs` -> 200
+    - `GET /api/backtest/runs?strategy=BoktoshiMa50` -> 200
+    - `GET /backtest` -> 200
+
+## 85) Backtest one-click run from UI (`Run New Backtest`) (2026-03-08)
+
+- Added backend run pipeline in `app/services/backtest_app_service.py`:
+  - new runner: `run_freqtrade_backtest_and_publish(...)`
+  - updates runtime Freqtrade config for selected `pair/timeframe`
+  - executes:
+    - `docker-compose run --rm freqtrade download-data ...`
+    - `docker-compose run --rm freqtrade backtesting ...`
+  - auto-builds and publishes latest artifact after successful run.
+- Added API in `app/main.py`:
+  - `POST /api/backtest/run`
+  - request fields: `strategy`, `pair`, `timeframe`, `timerange`, `label`, `timeout_sec`
+  - improved error mapping for command fail / timeout / bad input.
+- Added UI controls in `app/templates/backtest.html`:
+  - run strategy selector,
+  - run pair input,
+  - run timeframe input,
+  - run label input,
+  - `Run New Backtest` button + run status note.
+  - successful run auto-refreshes latest data, filters, and compare run list.
+- Dev runtime integration updates:
+  - `docker-compose.dev.yml`:
+    - mount Freqtrade workspace path into app container at host-identical absolute path,
+    - mount docker socket,
+    - set `FREQTRADE_PROJECT_DIR` env.
+  - `Dockerfile`:
+    - install `docker-cli` + `docker-compose` so API can trigger Freqtrade compose commands.
+- Verification:
+  - `python3 -m compileall app scripts` passed.
+  - live smoke:
+    - `GET /api/backtest/strategies` -> 200
+    - `GET /api/backtest/pairs` -> 200
+    - `GET /backtest` -> 200
+    - `POST /api/backtest/run` (SOL/4h/MA50, timerange `20260101-`) -> 200
+- run output:
+  - new artifact id: `1772961370_backtest-result-2026-03-08_09-16-09`
+  - latest summary trades: `9`
+  - run list count increased to `3`.
+
+## 86) Dashboard unknown positions section (2026-03-10)
+
+- Root cause confirmed: `/api/open-positions` already returns `unknown_positions`, but Dashboard template (`app/templates/index.html`) only rendered strategy/manual blocks, while Position Management rendered all 3 groups.
+- Updated Dashboard Open Positions card to include:
+  - `Unknown Position` heading,
+  - `#positions-unknown` table container.
+- Updated Dashboard refresh/render logic to parse `positions.unknown_positions` and render the same columns as Strategy/Manual tables.
+- Added regression test `tests/test_dashboard_template_unknown.py` to assert unknown section/render hook exists in dashboard template.
+- Scope intentionally limited (per user request): no new close action button added on Dashboard.
+
+## 87) Unknown close reliability when remote `/positions` fails (2026-03-10)
+
+- Incident: user clicked `Close All Unknown Positions` while 2 XRP LONG were visible, but action appeared to not close.
+- Root cause in backend runtime flow:
+  - `BotRunner._fetch_positions()` returned `[]` on remote error,
+  - close flows relying on fresh positions had no targets,
+  - ownership sync could also be affected by empty snapshots.
+- Fix in `BoktoshiBotModule/bot_runner.py`:
+  - on `get_positions()` failure, fallback to cached KV snapshot (`positions`) when available,
+  - emit structured WARN log event `positions_fetch_using_cached_snapshot` with cached_count and error details,
+  - return cached positions list instead of hard empty list.
+- Added regression test in `tests/test_bot_runner_flows.py`:
+  - `test_fetch_positions_uses_cached_snapshot_when_remote_fails`.
+
+## 88) Trading Journal summary: ignore estimated rows for key totals (2026-03-14)
+
+- Updated journal summary aggregation in `app/main.py` (`_summarize_journal_rows`):
+  - `Best PnL` and `Worst PnL` now only use non-`ESTIMATED` rows.
+  - `Total PnL` now sums only non-`ESTIMATED` rows.
+  - `Total Size` now sums only non-`ESTIMATED` rows.
+- Filtering rule is driven by `finalization_state == ESTIMATED` from decorated journal rows.
+- Intentionally kept wins/losses behavior unchanged (still based on displayed PnL rows) to avoid broad UX behavior changes outside requested scope.
+
+## 89) ASTER Pro API V3 migration for trading module (2026-05-01)
+
+- Migrated ASTER trading auth from legacy API key/secret HMAC to Pro API signer flow:
+  - `AsterTradingModule/config.py`
+    - new envs: `ASTER_USER_ADDRESS`, `ASTER_SIGNER_ADDRESS`, `ASTER_SIGNER_PRIVATE_KEY`, `ASTER_CHAIN_ID`, `ASTER_VERIFYING_CONTRACT`, `ASTER_EIP712_DOMAIN_NAME`, `ASTER_EIP712_DOMAIN_VERSION`.
+  - `AsterTradingModule/client.py`
+    - removed `X-MBX-APIKEY`/timestamp signature flow.
+    - added microsecond nonce generator with monotonic lock.
+    - added EIP-712 typed-data signature (`AsterSignTransaction`) for `msg=<urlencoded params>` payload.
+    - signed requests now attach `user`, `signer`, `nonce`, `signature`.
+- Migrated ASTER trading endpoints to V3 path family in `AsterTradingModule/client.py`:
+  - account/balance/position/openOrders/allOrders/userTrades/income/leverage/order/cancel/allOpenOrders now use `/fapi/v3/*`.
+- Updated ASTER service auth diagnostics in `AsterTradingModule/service.py`:
+  - connection check now validates Pro credential triplet (user/signer/private key).
+  - operator hints updated for nonce/signer/permission style failures.
+- Migrated market data client to V3 defaults in `app/aster_client.py`:
+  - base URL default to `https://fapi.asterdex.com`.
+  - public endpoints switched from `/fapi/v1/*` to `/fapi/v3/*`.
+- Credential template update:
+  - `AsterTradingModule/.env` now uses Pro API fields and removed legacy key/secret placeholders.
+- Test update:
+  - added `tests/test_aster_trading_client.py` to validate signed Pro payload fields and V3 path usage.
+- Validation in this session:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - `pytest` command is unavailable in current shell (`pytest: command not found`) so test execution could not be completed here.
+
+## 90) AsterTrading pair list switched to dynamic USDT perps (2026-05-01)
+
+- Updated `AsterTradingModule/service.py` to fetch tradable pair list dynamically from `exchangeInfo` instead of static whitelist-only response for symbols API.
+- New symbol discovery behavior:
+  - include only symbols that satisfy:
+    - `contractType == PERPETUAL`
+    - `status == TRADING`
+    - `quoteAsset == USDT`
+  - sorted and cached briefly for API stability/performance.
+- Updated `_normalize_symbol` guard to validate against dynamic tradable set (with fallback to static list on exchange info error).
+- Updated `get_symbols()` output:
+  - returns dynamic USDT perp list when available.
+  - falls back to `MANUAL_ALLOWED_SYMBOLS` if exchange metadata is unavailable.
+  - default symbol is auto-corrected to first available symbol when configured default is not in list.
+- Test updates in `tests/test_aster_trading_service.py`:
+  - added filter test for `PERPETUAL + TRADING + USDT`.
+  - added dynamic symbol acceptance test for a symbol outside static whitelist.
+  - updated fixture exchange-info payload to include required contract/status/quote fields.
+- Validation:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - `pytest` unavailable in container image (`pytest: executable file not found`).
+
+## 91) AsterSimpleTrading account overview panel (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html` to show dedicated account info block in the top section:
+  - new `ACCOUNT OVERVIEW` card with key metrics:
+    - Perp Total Value
+    - Unrealized PnL
+    - Account Equity
+    - Wallet Balance
+    - Available Balance
+    - Margin Ratio
+- `refreshAccount()` now renders structured key-value rows in this panel.
+- Added automatic account refresh every 10 seconds in addition to manual `Refresh Account Snapshot` button.
+- The close-position card remains focused on quick close actions while account state is visible side-by-side.
+
+## 92) AsterSimpleTrading account risk colors + warning badges + mini-history (2026-05-01)
+
+- Enhanced `app/templates/aster_simple_trading.html` account panel with quick-risk readability upgrades:
+  - color coding for Unrealized PnL:
+    - positive -> green
+    - negative -> red
+  - margin ratio severity styling and badge:
+    - `<35%` -> `SAFE`
+    - `35% - <60%` -> `WATCH`
+    - `>=60%` -> `RISK`
+- Added mini history section under account overview:
+  - stores and renders the latest 5 snapshots from runtime account refresh.
+  - each row includes time, account equity, unrealized PnL, and margin ratio severity.
+- Added lightweight helper functions in template JS:
+  - `marginBadge`, `ratioStyled`, `renderAccountHistory`, and snapshot buffer handling.
+- Updated template tests in `tests/test_aster_trading_templates.py` to cover new account panel text and refresh behavior.
+- Validation:
+  - `python3 -m compileall app tests` passed.
+  - smoke check `GET /aster-simple-trading` returned `200`.
+
+## 93) AsterSimpleTrading position estimate hint under settings (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html` to add realtime explanation line under `POSITION SETTINGS`:
+  - `Estimated Position Size`
+  - `Est. SL Risk`
+  - `Est. TP`
+- Calculations are derived from current form values:
+  - `notional = margin * leverage`
+  - `sl_risk = notional * (stoploss_pct)`
+  - `tp_target = notional * (take_profit_pct)`
+- Added live update on input changes (`margin`, `leverage`, `sl`, `tp`) and after loading/saving local settings.
+
+## 94) AsterSimpleTrading auto SL checkbox + TP RR dropdown, and nav active color split (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html`:
+  - added checkbox under Stoploss: `1% Stoploss (auto from account risk)`.
+  - added `Take Profit Mode` dropdown:
+    - Manual %
+    - RR 1:2
+    - RR 1:3
+    - RR 1:4
+  - behavior:
+    - Stoploss input disabled when auto 1% is enabled.
+    - Take Profit % input disabled when RR mode is selected.
+  - payload now sends:
+    - `auto_stoploss_1pct`
+    - `tp_mode` (`manual` or `rr`)
+    - `tp_rr` (2/3/4)
+  - estimate hint now includes mode tags (`SL mode`, `TP mode`).
+- Updated `AsterTradingModule/service.py` preview logic:
+  - when `tp_mode == rr`, take profit price is computed by risk-distance from stop price:
+    - LONG: `entry + rr * (entry-stop)`
+    - SHORT: `entry - rr * (stop-entry)`
+  - keeps manual `%` path unchanged for backward compatibility.
+- Updated nav active color styling:
+  - `AsterTrading` active tab -> yellow accent.
+  - `AsterSimpleTrading` active tab -> orange accent.
+  - applied in both templates:
+    - `app/templates/aster_trading.html`
+    - `app/templates/aster_simple_trading.html`
+- Test updates:
+  - `tests/test_aster_trading_templates.py` asserts new controls exist.
+  - `tests/test_aster_trading_service.py` adds RR-mode preview test.
+- Validation:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - smoke checks:
+    - `GET /aster-simple-trading` -> 200
+    - `GET /aster-trading` -> 200
+
+## 95) AsterSimpleTrading estimate line now updates with backend preview SL/TP prices (2026-05-01)
+
+- User feedback issue: enabling `1% Stoploss` did not visibly update SL price in the estimate line.
+- Root cause:
+  - estimate line was local math only, while auto 1% stoploss is finalized in backend preview logic.
+- Fix in `app/templates/aster_simple_trading.html`:
+  - split estimate update into:
+    - local immediate estimation (`updatePositionEstimateLocal`)
+    - backend preview sync (`updatePositionEstimateFromPreview`) via `/api/aster-trading/order-preview`
+  - estimate line now includes real-time `SL Price` and `TP Price` from backend preview response.
+  - fallback note `(preview unavailable)` when network/preview fails.
+  - updated handlers for margin/leverage/sl/tp/auto1pct/tp-mode changes to refresh both local+preview estimate.
+- UI text adjustment:
+  - TP dropdown labels shortened to requested format:
+    - `TP RR 1:2`
+    - `TP RR 1:3`
+    - `TP RR 1:4`
+- Validation:
+  - `python3 -m compileall app tests` passed.
+  - smoke check `GET /aster-simple-trading` -> 200.
+
+## 96) AsterSimpleTrading estimate emphasis colors for SL risk and TP target (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html` estimate rendering to support inline emphasis styling.
+- `Est. SL Risk` is now red + bold.
+- `Est. TP` is now green + bold.
+- Other estimate text remains unchanged as requested.
+- Refactored estimate output to HTML formatter (`renderEstimateLine`) so both local and preview-synced updates share identical visual format.
+
+## 97) AsterSimpleTrading TP RR now gated by explicit checkbox (2026-05-01)
+
+- UX update in `app/templates/aster_simple_trading.html` per operator request:
+  - added checkbox before `Take Profit Mode` selector (`id="cfg-tp-rr-enabled"`).
+  - unchecked => system uses `Take Profit (%)` manual value.
+  - checked => system applies `Take Profit Mode` RR dropdown value (`TP RR 1:2/1:3/1:4`).
+- Behavior updates:
+  - when checkbox is unchecked: RR dropdown disabled, TP% enabled.
+  - when checkbox is checked: RR dropdown enabled, TP% disabled.
+  - payload uses:
+    - `tp_mode="manual"` when unchecked,
+    - `tp_mode="rr"` when checked.
+- Label style update:
+  - `Take Profit Mode` text now white like the `1% Stoploss` line.
+- Estimate line mode tagging and preview sync now read from checkbox state (`useTpRr`) instead of inferring from dropdown value alone.
+- Validation:
+  - `python3 -m compileall app tests` passed.
+  - smoke check `GET /aster-simple-trading` -> 200.
+
+## 98) AsterSimpleTrading adds explicit SL distance percent info (2026-05-01)
+
+- Added a new line under estimate summary in `app/templates/aster_simple_trading.html`:
+  - `SL Price % from entry price: ...`
+- This value shows how far stop-loss is from entry price in percentage terms to help pre-trade risk sizing.
+- Data source behavior:
+  - uses backend preview value (`stop_loss_pct`) when preview is available,
+  - falls back to local estimate with `(preview unavailable)` note when preview request fails.
+- Updated template test coverage in `tests/test_aster_trading_templates.py`.
+
+## 99) SL distance info text color set to white (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html` so `SL Price % from entry price` line uses white text (`color: var(--text)`) for better readability.
+
+## 100) AsterSimpleTrading preview note highlighted in yellow bold (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html`:
+  - added `.preview-note-strong` style (`color: var(--gold); font-weight: 700`).
+  - applied to `#preview-note` (`Preview ETHUSDT: Entry ... | Qty ... | Margin ... | SL ...`).
+- Goal: make the preview line immediately visible in MANUAL TRADE PANEL.
+
+## 101) Estimated Entry Price added to SL distance info line (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html` to show:
+  - `Estimated Entry Price: ... | SL Price % from entry price: ...`
+- `Estimated Entry Price` is now sourced from backend preview response (`entry_price`) when available.
+- If preview is unavailable, entry displays `-` and the line keeps preview-unavailable note behavior.
+
+## 102) Split entry/sl percent into two lines + highlight estimated entry (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html`:
+  - separated info into 2 lines:
+    - `Estimated Entry Price: ...`
+    - `SL Price % from entry price: ...`
+  - `Estimated Entry Price` now uses stronger dark-gold text + bold for faster visual scan.
+- JS renderer now outputs separate entry and SL-percent fields (`entry-price-info`, `sl-distance-info`) while preserving preview/fallback behavior.
+
+## 103) AsterSimpleTrading estimate supports LONG/SHORT selector (2026-05-01)
+
+- Added `Estimate Side` selector in `POSITION SETTINGS` on `app/templates/aster_simple_trading.html`:
+  - `LONG (BUY)`
+  - `SHORT (SELL)`
+- Estimate preview requests now use selected estimate side instead of hardcoded BUY.
+- This ensures estimate lines (`Estimated Position Size`, `SL/TP price`, `Estimated Entry Price`, `SL %`) are direction-correct for planned LONG or SHORT setup.
+- Trade action buttons remain unchanged:
+  - `OPEN LONG` still places BUY
+  - `OPEN SHORT` still places SELL
+
+## 104) Estimate side correction: preview sync now respects selected side (2026-05-01)
+
+- Fixed `app/templates/aster_simple_trading.html` logic mismatch reported by operator:
+  - `updatePositionEstimateFromPreview()` was incorrectly hardcoded to `BUY`.
+  - now uses `buildEstimatePayload()` so estimate sync follows `Estimate Side` selector (`BUY`/`SELL`).
+- Fixed order action safety regression:
+  - `openLong()` now explicitly uses `buildOrderPayload('BUY')`.
+  - prevents `OPEN LONG` from accidentally inheriting `Estimate Side`.
+- Result:
+  - estimate calculations are direction-correct for LONG/SHORT.
+  - trade action buttons remain strictly side-correct (`LONG=BUY`, `SHORT=SELL`).
+
+## 105) Manual Trade Panel preview note now syncs with estimate-side SL updates (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html` so `#preview-note` is refreshed whenever estimate preview refreshes.
+- Effect:
+  - when changing estimate-side related settings, the `Preview ... | SL ...` line now updates immediately with latest preview values.
+  - preview fallback shows `Preview: unavailable` when preview fetch fails.
+
+## 106) Prevent double-order clicks + show submit status; remove static symbol filter in open positions/orders (2026-05-01)
+
+- Backend visibility fix in `AsterTradingModule/service.py`:
+  - removed static whitelist filter from `get_open_positions()` so non-whitelist symbols (e.g. `MONUSDT`) are no longer hidden.
+  - removed static whitelist filter from `get_open_orders()` `ALL` path and switched fallback polling to dynamic tradable symbol set.
+- UI safety/feedback fix in `app/templates/aster_simple_trading.html`:
+  - added `Order status` line in MANUAL TRADE PANEL (`idle/submitting/success/failed`).
+  - added in-flight guard + temporary button disable for `OPEN LONG` / `OPEN SHORT`.
+  - buttons now show `Submitting...` while request is in progress.
+  - added 3s cooldown after successful submit to reduce accidental duplicate entries.
+  - after submit, UI now refreshes positions/orders/account/preview via `Promise.allSettled`.
+- Test updates:
+  - `tests/test_aster_trading_service.py`: added case to ensure positions outside static whitelist are included.
+  - `tests/test_aster_trading_templates.py`: added assertions for submit status guard controls.
+- Validation:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - smoke check `GET /aster-simple-trading` -> 200.
+  - runtime check `GET /api/aster-trading/open-positions` -> 200 with current live items.
+
+## 107) Submit status now includes symbol + side (+ orderId on success) (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html` submit feedback text:
+  - busy state now shows selected symbol and side (`MONUSDT LONG`, `BTCUSDT SHORT`, ...).
+  - success state now includes symbol/side and appends `orderId` when available.
+- Goal: improve operator clarity during fast manual actions.
+
+## 108) Position Settings mode switch: Normal vs Manual SL Auto-Rest (2026-05-01)
+
+- Added settings mode dropdown in `app/templates/aster_simple_trading.html`:
+  - `Normal Flow Settings`
+  - `Manual SL, Auto the Rest`
+- UI behavior:
+  - mode switch toggles section visibility.
+  - `Normal` keeps existing margin/leverage/sl flow.
+  - `Manual SL, Auto the Rest` exposes:
+    - fixed leverage input
+    - manual SL price input
+    - `% Risk on Total Capital` input (capped at 5%).
+- Execution behavior:
+  - order payload now includes `settings_mode`.
+  - manual-sl mode sends `manual_sl_price` + `risk_pct_total_capital` and lets backend compute rest.
+- Backend support in `AsterTradingModule/service.py`:
+  - `preview_order()` now handles `settings_mode=manual_sl_auto_rest`.
+  - validates SL side direction and risk% max 5.
+  - computes notional from account risk target and SL distance, then derives margin from fixed leverage.
+- Added/updated tests:
+  - template assertions for new mode controls.
+  - service test for manual-SL risk-based sizing branch.
+
+## 109) Manual SL mode now auto-computes leverage using remaining slots (x3..x6) (2026-05-01)
+
+- Implemented remaining-slot leverage logic in `AsterTradingModule/service.py` for `settings_mode=manual_sl_auto_rest`:
+  - counts currently open positions globally,
+  - computes `remaining_slots = 3 - open_positions_count`,
+  - uses available balance with 10% reserve buffer,
+  - computes margin budget per remaining slot,
+  - derives `leverage_needed` and auto-selects leverage in range `x3..x6`.
+- Safety checks added:
+  - reject when max open positions reached,
+  - reject when risk+SL cannot be satisfied within `x6`,
+  - `% Risk on Total Capital` hard cap remains 5%.
+- Added preview output metadata for operator visibility:
+  - `manual_auto_runtime` with open slots, remaining slots, budget/slot, leverage needed/chosen.
+- Updated `app/templates/aster_simple_trading.html` manual mode section:
+  - removed manual leverage input from this mode,
+  - added runtime summary text (`Auto leverage chosen`, slot counts, budget/slot).
+  - keeps `Normal Flow` leverage input unchanged.
+
+## 110) Open positions uPnL color coding in AsterSimpleTrading (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html` positions table rendering:
+  - `uPnL > 0` -> green + bold (`.upnl-pos`)
+  - `uPnL < 0` -> red + bold (`.upnl-neg`)
+  - `uPnL = 0` -> default text color
+- Helps operators instantly identify winning/losing open positions in realtime panel.
+
+## 111) Open orders table now shows trigger price and close-position mode correctly (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html` open-orders rendering to avoid misleading `0` price/qty for SL/TP market close orders.
+- Changes:
+  - column labels updated:
+    - `Price` -> `Trigger/Price`
+    - `Qty` -> `Qty/Mode`
+  - `STOP_MARKET` and `TAKE_PROFIT_MARKET` now display `stopPrice` as trigger price.
+  - close-position orders (`closePosition=true`) now display `Close-All` instead of `0` qty.
+  - type column now includes compact SL/TP visual badge for faster scan.

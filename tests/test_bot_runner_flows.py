@@ -57,6 +57,26 @@ def test_pause_resume_updates_status_kv(tmp_path):
     assert get_kv(runner.db_path, "strategy_state", "") == "running"
 
 
+def test_fetch_positions_uses_cached_snapshot_when_remote_fails(tmp_path, monkeypatch):
+    runner = make_runner(tmp_path)
+    cached_positions = [
+        {"positionId": "u1", "coin": "XRP", "side": "LONG", "openedAt": 1001},
+        {"positionId": "u2", "coin": "XRP", "side": "LONG", "openedAt": 1002},
+    ]
+    set_kv(runner.db_path, "positions", json.dumps({"positions": cached_positions}))
+
+    def fake_get_positions():
+        raise bot_runner_module.MTCClientError("remote down", code="HTTP_502")
+
+    monkeypatch.setattr(runner.client, "get_positions", fake_get_positions)
+
+    result = runner._fetch_positions(now=1700000000)
+
+    assert isinstance(result, list)
+    assert len(result) == 2
+    assert {str(p.get("positionId", "")) for p in result} == {"u1", "u2"}
+
+
 def test_manual_close_rejects_strategy_and_closes_selected_manual(tmp_path, monkeypatch):
     runner = make_runner(tmp_path)
     set_kv(runner.db_path, "strategy_position_id", "s1")

@@ -5,12 +5,16 @@ ENV PYTHONUNBUFFERED=1
 
 WORKDIR /app
 
+RUN apt-get update && apt-get install -y --no-install-recommends docker-cli docker-compose && rm -rf /var/lib/apt/lists/*
+
 COPY requirements.txt /app/requirements.txt
 RUN pip install --no-cache-dir -r /app/requirements.txt
 
 COPY app /app/app
 COPY BoktoshiBotModule /app/BoktoshiBotModule
 COPY AsterTradingModule /app/AsterTradingModule
+COPY BacktestModule /app/BacktestModule
+COPY scripts /app/scripts
 COPY README.md /app/README.md
 
 ENV DB_PATH=/app/data/bot.db

@@ -261,3 +261,13 @@ def test_move_stop_to_breakeven_live_cancels_old_stop_and_places_new_stop():
     assert out["cancelled_stop_orders"][0]["orderId"] == 11
     assert out["new_stop_order"]["params"]["type"] == "STOP_MARKET"
     assert float(out["be_stop_price"]) == 1900.0
+
+
+def test_move_stop_to_breakeven_returns_already_at_be_when_stop_matches_entry():
+    service = _service()
+    service.client._open_orders = [
+        {"orderId": 20, "type": "STOP_MARKET", "side": "SELL", "closePosition": "true", "stopPrice": "1900.0"},
+    ]
+    out = service.move_stop_to_breakeven({"symbol": "ETHUSDT", "position_side": "LONG", "dry_run": False})
+    assert out["success"] is True
+    assert "already at break-even" in out["message"].lower()

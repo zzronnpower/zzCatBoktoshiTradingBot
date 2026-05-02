@@ -100,6 +100,10 @@
       .submit-status.busy { color: #ffd06b; }
       .submit-status.ok { color: #9be6b4; }
       .submit-status.err { color: #ff8f84; }
+      .be-state { margin-top: 8px; font-size: 13px; font-weight: 700; }
+      .be-state.ready { color: #9be6b4; }
+      .be-state.already { color: #ffd06b; }
+      .be-state.none { color: var(--muted); font-weight: 500; }
       .table-wrap { overflow: auto; max-height: 370px; border: 1px solid var(--line); border-radius: 9px; }
       table { width: 100%; border-collapse: collapse; font-size: 13px; }
       th, td { border-bottom: 1px solid #262626; padding: 8px 7px; text-align: left; }
@@ -264,6 +268,7 @@
           <h3 style="margin-top:6px; margin-bottom:4px;">MOVE TO BREAK EVEN</h3>
           <p class="muted">Move SL to entry price for open positions that are currently in profit.</p>
           <div class="field"><label>Profit Position</label><select id="be-symbol"></select></div>
+          <div id="be-status" class="be-state none">Break-even status: no profitable position.</div>
           <div class="action-row">
             <button id="btn-move-be" class="btn btn-save" type="button">Move To Break Even</button>
           </div>
@@ -688,10 +693,36 @@
         closeSelect.value = found ? found.value : opts[0].value;
       }
 
-      function updateBreakEvenOptions(positions) {
+      function updateBreakEvenButtonState() {
+        const beSelect = document.getElementById('be-symbol');
+        const beBtn = document.getElementById('btn-move-be');
+        const beStatus = document.getElementById('be-status');
+        const raw = beSelect.value || '';
+        if (!raw) {
+          beBtn.disabled = true;
+          beStatus.className = 'be-state none';
+          beStatus.textContent = 'Break-even status: no profitable position.';
+          return;
+        }
+        const parts = raw.split('|');
+        const symbol = parts[0] || '-';
+        const side = parts[1] || '-';
+        const status = parts[3] || 'ready';
+        beBtn.disabled = status !== 'ready';
+        if (status === 'ready') {
+          beStatus.className = 'be-state ready';
+          beStatus.textContent = `Break-even status: ${symbol} ${side} ready to move.`;
+        } else {
+          beStatus.className = 'be-state already';
+          beStatus.textContent = `Break-even status: ${symbol} ${side} already at BE.`;
+        }
+      }
+
+      function updateBreakEvenOptions(positions, orders) {
         const beSelect = document.getElementById('be-symbol');
         const beBtn = document.getElementById('btn-move-be');
         const previous = beSelect.value;
+        const openOrders = (orders && Array.isArray(orders.items)) ? orders.items : [];
         const rows = (positions.items || []).filter((p) => {
           const amt = Number(p.positionAmt || 0);
           if (amt === 0) return false;
@@ -705,25 +736,38 @@
           beSelect.innerHTML = '<option value="">No profitable positions</option>';
           beSelect.disabled = true;
           beBtn.disabled = true;
+          updateBreakEvenButtonState();
           return;
         }
         const opts = rows.map((p) => {
           const symbol = String(p.symbol || '').toUpperCase();
           const amt = Number(p.positionAmt || 0);
           const side = amt >= 0 ? 'LONG' : 'SHORT';
+          const closeSide = side === 'LONG' ? 'SELL' : 'BUY';
           const entry = Number(p.entryPrice || 0);
           const mark = Number(p.markPrice || 0);
           const upnl = Number(p.unRealizedProfit || 0);
           const upnlText = `${upnl >= 0 ? '+' : ''}${Number(upnl).toFixed(2)}`;
-          const value = `${symbol}|${side}|${symbol}_${side}`;
-          const label = `${symbol} | ${side} | Entry ${money(entry)} | Mark ${money(mark)} | uPnL ${upnlText}`;
+          const hasBeStop = openOrders.some((o) => {
+            const oSymbol = String(o.symbol || '').toUpperCase();
+            const oType = String(o.type || '').toUpperCase();
+            const oSide = String(o.side || '').toUpperCase();
+            const oClose = String(o.closePosition || '').toLowerCase();
+            if (oSymbol !== symbol || oType !== 'STOP_MARKET' || oSide !== closeSide || !['true', '1'].includes(oClose)) return false;
+            const stop = Number(o.stopPrice || 0);
+            return stop > 0 && Math.abs(stop - entry) < 1e-9;
+          });
+          const status = hasBeStop ? 'already' : 'ready';
+          const value = `${symbol}|${side}|${symbol}_${side}|${status}`;
+          const statusTag = hasBeStop ? ' | Already BE' : '';
+          const label = `${symbol} | ${side} | Entry ${money(entry)} | Mark ${money(mark)} | uPnL ${upnlText}${statusTag}`;
           return { value, label };
         });
         beSelect.innerHTML = opts.map((o) => `<option value="${o.value}">${o.label}</option>`).join('');
         beSelect.disabled = false;
-        beBtn.disabled = false;
         const found = opts.find((o) => o.value === previous);
         beSelect.value = found ? found.value : opts[0].value;
+        updateBreakEvenButtonState();
       }
 
       function buildOrderPayload(side) {
@@ -857,7 +901,11 @@
           logResult({ success: false, message: 'No open position selected.' });
           return;
         }
-        const [symbol, positionSide] = selectedRaw.split('|');
+        const [symbol, positionSide, _k, status] = selectedRaw.split('|');
+        if (status && status !== 'ready') {
+          logResult({ success: true, message: `${symbol} ${positionSide} already has break-even stop.` });
+          return;
+        }
         const payload = {
           symbol: symbol || document.getElementById('f-symbol').value,
           position_side: positionSide || '',
@@ -933,7 +981,7 @@
           fetchJson('/api/aster-trading/open-orders'),
         ]);
         updateClosePositionOptions(positions);
-        updateBreakEvenOptions(positions);
+        updateBreakEvenOptions(positions, orders);
         document.getElementById('positions-box').innerHTML = tableHtml(
           ['Symbol', 'Side', 'Amt', 'Entry', 'Mark', 'uPnL', 'Lev'],
           (positions.items || []).map((p) => {
@@ -1010,6 +1058,7 @@
       document.getElementById('btn-close-selected').addEventListener('click', () => closeSelectedSymbol().catch((e) => logResult(String(e))));
       document.getElementById('btn-close-all').addEventListener('click', () => closeAllPositions().catch((e) => logResult(String(e))));
       document.getElementById('btn-move-be').addEventListener('click', () => moveStopToBreakEven().catch((e) => logResult(String(e))));
+      document.getElementById('be-symbol').addEventListener('change', updateBreakEvenButtonState);
       document.getElementById('btn-refresh-account').addEventListener('click', () => refreshAccount().catch((e) => logResult(String(e))));
       document.getElementById('btn-toggle-result-raw').addEventListener('click', () => {
         resultRawVisible = !resultRawVisible;

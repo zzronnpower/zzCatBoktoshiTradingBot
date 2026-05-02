@@ -2393,3 +2393,29 @@ When a new assistant session starts:
   - `tests/test_aster_trading_templates.py`: added template assertions for break-even section.
 - Verification note:
   - local environment currently does not have `pytest` installed (`python3 -m pytest` unavailable), so pytest suite could not be executed in this shell.
+
+## 116) Break-even guard for "Already at BE" + API smoke check (2026-05-02)
+
+- Enhanced BE backend guard in `AsterTradingModule/service.py`:
+  - detects existing SL `STOP_MARKET` close-position order already equal to entry price.
+  - when already at BE and no replacement needed, returns success message and skips cancel/re-place.
+- Enhanced BE frontend in `app/templates/aster_simple_trading.html`:
+  - BE dropdown now cross-checks open orders and labels matching entries with `Already BE`.
+  - `Move To Break Even` button auto-disables for selected `Already BE` entry.
+  - action handler prevents redundant submit and returns friendly message instead.
+- Test update:
+  - `tests/test_aster_trading_service.py` adds case for `already at break-even` return path.
+- Runtime validation:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - smoke check `POST /api/aster-trading/move-stop-to-breakeven` returned HTTP 200 with functional payload (`No open ETHUSDT position found.` in current account state).
+
+## 117) BE visual status highlight in AsterSimpleTrading (2026-05-02)
+
+- Updated `app/templates/aster_simple_trading.html` BE section with explicit visual status text under dropdown:
+  - `Break-even status: ... ready to move.` (green)
+  - `Break-even status: ... already at BE.` (amber)
+  - empty/profitless state in muted color.
+- `Move To Break Even` button state remains synchronized with status:
+  - enabled only for `ready` entries,
+  - disabled for `already` entries and no-profit state.
+- Goal: make `Already BE` state immediately visible without relying only on option text.

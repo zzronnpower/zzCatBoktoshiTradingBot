@@ -2205,6 +2205,31 @@ Trạng thái kiểm tra:
 - Logic close selected/close all vẫn giữ nguyên code path cũ.
 - Đã bổ sung test cho API + service + template liên quan BE.
 - Môi trường shell hiện tại chưa có pytest nên chưa chạy được test suite tại local shell này.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok làm</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã làm tiếp 2 phần như đã đề xuất:
+
+- Thêm guard `Already at BE`:
+  - Backend BE giờ phát hiện nếu SL `STOP_MARKET` close-position đã đúng bằng giá Entry thì trả success và không cancel/re-place lệnh.
+  - UI dropdown BE hiển thị nhãn `Already BE` cho vị thế đó và tự disable nút `Move To Break Even` khi chọn.
+- Smoke test API BE:
+  - gọi trực tiếp `POST /api/aster-trading/move-stop-to-breakeven` nhận HTTP 200.
+  - payload hiện tại trả `No open ETHUSDT position found.` (đúng theo trạng thái account lúc test).
+- Kiểm tra kỹ thuật:
+  - `python3 -m compileall app AsterTradingModule tests` passed.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>ok</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã bổ sung thêm phần highlight trạng thái BE để nhìn rõ hơn:
+
+- Thêm dòng trạng thái ngay dưới dropdown `Profit Position`:
+  - xanh: `ready to move`
+  - vàng: `already at BE`
+  - xám: không có vị thế profit
+- Nút `Move To Break Even` vẫn auto disable/enable theo đúng trạng thái này.
+
+Mục tiêu là operator nhìn phát biết ngay vị thế nào còn cần bấm BE, vị thế nào đã dời SL xong.</pre></div>
           </div>
         </div>
       </section>

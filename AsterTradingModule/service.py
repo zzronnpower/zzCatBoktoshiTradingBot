@@ -594,6 +594,9 @@ class AsterManualTradingService:
         close_side = "SELL" if side == "LONG" else "BUY"
         open_orders = self.client.get_open_orders(symbol)
         stop_orders_to_cancel: List[Dict[str, Any]] = []
+        already_at_be = False
+        tick_size = _to_float(filters.get("tick_size"), 0.0)
+        tolerance = tick_size * 0.5 if tick_size > 0 else 1e-9
         for order in open_orders:
             order_type = str(order.get("type", "")).upper().strip()
             order_side = str(order.get("side", "")).upper().strip()
@@ -604,7 +607,23 @@ class AsterManualTradingService:
                 continue
             if close_position_flag not in {"true", "1"}:
                 continue
+            stop_price = _to_float(order.get("stopPrice"), 0.0)
+            if stop_price > 0 and abs(stop_price - be_stop_price) <= tolerance:
+                already_at_be = True
+                continue
             stop_orders_to_cancel.append(order)
+
+        if already_at_be and not stop_orders_to_cancel:
+            return {
+                "success": True,
+                "dry_run": dry_run,
+                "symbol": symbol,
+                "position_side": side,
+                "entry_price": entry_price,
+                "mark_price": mark_price,
+                "be_stop_price": be_stop_price,
+                "message": f"{symbol} {side} stop-loss is already at break-even.",
+            }
 
         if dry_run:
             return {

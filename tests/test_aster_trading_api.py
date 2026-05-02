@@ -27,6 +27,42 @@ def test_aster_trading_close_all_positions_endpoint(monkeypatch):
     assert payload["closed"] == 2
 
 
+def test_aster_trading_move_stop_to_breakeven_endpoint(monkeypatch):
+    monkeypatch.setattr(
+        app_main.aster_trading,
+        "move_stop_to_breakeven",
+        lambda payload: {
+            "success": True,
+            "dry_run": bool(payload.get("dry_run")),
+            "symbol": payload.get("symbol"),
+            "position_side": payload.get("position_side"),
+        },
+    )
+    payload = app_main.aster_trading_move_stop_to_breakeven({"symbol": "ETHUSDT", "position_side": "LONG", "dry_run": True})
+    assert payload["success"] is True
+    assert payload["dry_run"] is True
+    assert payload["symbol"] == "ETHUSDT"
+    assert payload["position_side"] == "LONG"
+
+
+def test_aster_trading_close_position_endpoint(monkeypatch):
+    monkeypatch.setattr(
+        app_main.aster_trading,
+        "close_position_market",
+        lambda payload: {
+            "success": True,
+            "symbol": payload.get("symbol"),
+            "position_side": payload.get("position_side"),
+            "dry_run": bool(payload.get("dry_run")),
+        },
+    )
+    payload = app_main.aster_trading_close_position({"symbol": "BTCUSDT", "position_side": "SHORT", "dry_run": True})
+    assert payload["success"] is True
+    assert payload["symbol"] == "BTCUSDT"
+    assert payload["position_side"] == "SHORT"
+    assert payload["dry_run"] is True
+
+
 def test_aster_trading_open_positions_passes_symbol(monkeypatch):
     calls = {"symbol": None}
 
@@ -74,3 +110,16 @@ def test_aster_trading_history_endpoints_pass_symbol(monkeypatch):
     assert seen["pnl"] == (10, "SOLUSDT")
     assert trade["symbol"] == "SOLUSDT"
     assert pnl["symbol"] == "SOLUSDT"
+
+
+def test_aster_trading_closed_history_endpoint(monkeypatch):
+    seen = {"args": None}
+
+    def _hist(limit=200, symbol=None):
+        seen["args"] = (limit, symbol)
+        return {"symbol": symbol or "ALL", "items": [], "curve": [], "summary": {"realized": 0}}
+
+    monkeypatch.setattr(app_main.aster_trading, "get_closed_trades_history", _hist)
+    payload = app_main.aster_trading_history(limit=120, symbol="ETHUSDT")
+    assert seen["args"] == (120, "ETHUSDT")
+    assert payload["symbol"] == "ETHUSDT"

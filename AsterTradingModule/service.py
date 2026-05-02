@@ -556,6 +556,113 @@ class AsterManualTradingService:
             "items": items,
         }
 
+    def move_stop_to_breakeven(self, payload: Dict[str, Any]) -> Dict[str, Any]:
+        symbol = self._normalize_symbol(payload.get("symbol"))
+        position_side = str(payload.get("position_side", "")).upper().strip()
+        dry_run = _to_bool(payload.get("dry_run"), self.config.dry_run)
+
+        positions = self.client.get_positions(symbol)
+        target = None
+        for pos in positions:
+            amt = _to_float(pos.get("positionAmt"), 0.0)
+            if abs(amt) <= 1e-12:
+                continue
+            side = "LONG" if amt > 0 else "SHORT"
+            if position_side and side != position_side:
+                continue
+            target = pos
+            break
+
+        if target is None:
+            return {"success": False, "message": f"No open {symbol} position found."}
+
+        amount = _to_float(target.get("positionAmt"), 0.0)
+        side = "LONG" if amount > 0 else "SHORT"
+        entry_price = _to_float(target.get("entryPrice"), 0.0)
+        mark_price = _to_float(target.get("markPrice"), 0.0)
+        unrealized_pnl = _to_float(target.get("unRealizedProfit"), 0.0)
+        if entry_price <= 0 or mark_price <= 0:
+            return {"success": False, "message": "Cannot resolve entry/mark price for break-even update."}
+
+        in_profit = (mark_price > entry_price) if side == "LONG" else (mark_price < entry_price)
+        if unrealized_pnl <= 0 and not in_profit:
+            return {"success": False, "message": f"{symbol} {side} is not in profit yet; break-even move is disabled."}
+
+        filters = self._symbol_filters(symbol)
+        be_stop_price = round_to_tick(entry_price, str(filters.get("tick_size", "0.01")))
+
+        close_side = "SELL" if side == "LONG" else "BUY"
+        open_orders = self.client.get_open_orders(symbol)
+        stop_orders_to_cancel: List[Dict[str, Any]] = []
+        for order in open_orders:
+            order_type = str(order.get("type", "")).upper().strip()
+            order_side = str(order.get("side", "")).upper().strip()
+            close_position_flag = str(order.get("closePosition", "")).lower().strip()
+            if order_type != "STOP_MARKET":
+                continue
+            if order_side != close_side:
+                continue
+            if close_position_flag not in {"true", "1"}:
+                continue
+            stop_orders_to_cancel.append(order)
+
+        if dry_run:
+            return {
+                "success": True,
+                "dry_run": True,
+                "symbol": symbol,
+                "position_side": side,
+                "entry_price": entry_price,
+                "mark_price": mark_price,
+                "be_stop_price": be_stop_price,
+                "cancel_stop_orders": [
+                    {"orderId": item.get("orderId"), "stopPrice": item.get("stopPrice"), "side": item.get("side")} for item in stop_orders_to_cancel
+                ],
+                "new_stop_order": {
+                    "symbol": symbol,
+                    "side": close_side,
+                    "type": "STOP_MARKET",
+                    "stopPrice": be_stop_price,
+                    "closePosition": "true",
+                    "workingType": "MARK_PRICE",
+                },
+                "message": "DRY_RUN break-even request prepared.",
+            }
+
+        cancelled_items: List[Dict[str, Any]] = []
+        for item in stop_orders_to_cancel:
+            order_id = int(_to_float(item.get("orderId"), 0.0))
+            if order_id <= 0:
+                continue
+            try:
+                result = self.client.cancel_order(symbol, order_id)
+                cancelled_items.append({"orderId": order_id, "success": True, "result": result})
+            except Exception as exc:
+                cancelled_items.append({"orderId": order_id, "success": False, "error": str(exc)})
+
+        stop_payload = {
+            "symbol": symbol,
+            "side": close_side,
+            "type": "STOP_MARKET",
+            "stopPrice": be_stop_price,
+            "closePosition": "true",
+            "workingType": "MARK_PRICE",
+            "newOrderRespType": "RESULT",
+        }
+        placed_stop = self.client.place_order(stop_payload)
+        return {
+            "success": True,
+            "dry_run": False,
+            "symbol": symbol,
+            "position_side": side,
+            "entry_price": entry_price,
+            "mark_price": mark_price,
+            "be_stop_price": be_stop_price,
+            "cancelled_stop_orders": cancelled_items,
+            "new_stop_order": placed_stop,
+            "message": f"Moved {symbol} {side} stop-loss to break-even.",
+        }
+
     def get_open_positions(self, symbol: Optional[str] = None) -> Dict[str, Any]:
         selected_symbol = self._normalize_symbol(symbol) if symbol else "ALL"
         positions = self.client.get_positions(None if selected_symbol == "ALL" else selected_symbol)
@@ -603,8 +710,66 @@ class AsterManualTradingService:
 
     def get_income_history(self, limit: int = 100, symbol: Optional[str] = None) -> Dict[str, Any]:
         safe_limit = max(1, min(int(limit), 1000))
-        selected_symbol = self._normalize_symbol(symbol) if symbol else self.config.default_symbol
-        return {"symbol": selected_symbol, "items": self.client.get_income(selected_symbol, safe_limit)}
+        selected_symbol = self._normalize_symbol(symbol) if symbol else "ALL"
+        return {"symbol": selected_symbol, "items": self.client.get_income(None if selected_symbol == "ALL" else selected_symbol, safe_limit)}
+
+    def get_closed_trades_history(self, limit: int = 200, symbol: Optional[str] = None) -> Dict[str, Any]:
+        safe_limit = max(1, min(int(limit), 1000))
+        selected_symbol = self._normalize_symbol(symbol) if symbol else "ALL"
+        income_items = self.client.get_income(None if selected_symbol == "ALL" else selected_symbol, safe_limit)
+        normalized: List[Dict[str, Any]] = []
+        for row in income_items:
+            if not isinstance(row, dict):
+                continue
+            symbol_name = str(row.get("symbol", "")).upper().strip() or "-"
+            income_type = str(row.get("incomeType", "")).upper().strip() or "UNKNOWN"
+            if income_type != "REALIZED_PNL":
+                continue
+            amount = _to_float(row.get("income"), 0.0)
+            ts = int(_to_float(row.get("time"), 0.0))
+            normalized.append(
+                {
+                    "time": ts,
+                    "symbol": symbol_name,
+                    "incomeType": income_type,
+                    "realizedPnl": amount,
+                    "asset": str(row.get("asset", "USDT")),
+                    "tradeId": row.get("tradeId") or row.get("tranId") or row.get("info") or "-",
+                    "raw": row,
+                }
+            )
+        normalized.sort(key=lambda x: int(x.get("time", 0)))
+
+        cum = 0.0
+        curve: List[Dict[str, Any]] = []
+        wins = 0
+        losses = 0
+        best = None
+        worst = None
+        for item in normalized:
+            pnl = _to_float(item.get("realizedPnl"), 0.0)
+            cum += pnl
+            curve.append({"time": int(item.get("time", 0)), "equity": cum})
+            if pnl > 0:
+                wins += 1
+            elif pnl < 0:
+                losses += 1
+            best = pnl if best is None else max(best, pnl)
+            worst = pnl if worst is None else min(worst, pnl)
+
+        return {
+            "symbol": selected_symbol,
+            "items": normalized,
+            "curve": curve,
+            "summary": {
+                "total": len(normalized),
+                "wins": wins,
+                "losses": losses,
+                "best": _to_float(best, 0.0),
+                "worst": _to_float(worst, 0.0),
+                "realized": cum,
+            },
+        }
 
     def get_config(self) -> Dict[str, Any]:
         data = asdict(self.config)

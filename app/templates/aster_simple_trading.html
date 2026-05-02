@@ -208,6 +208,7 @@
           <a href="/aster-chart">ASTER Chart</a>
           <a href="/aster-trading">AsterTrading</a>
           <a href="/aster-simple-trading" class="active">AsterSimpleTrading</a>
+          <a href="/aster-trading-history">AsterTradingHistory</a>
         </div>
       </div>
 
@@ -258,6 +259,13 @@
             <button id="btn-close-selected" class="btn btn-close" type="button">Close Selected Symbol</button>
             <button id="btn-close-all" class="btn btn-close-all" type="button">Close All Positions</button>
             <button id="btn-refresh-account" class="btn btn-refresh" type="button">Refresh Account Snapshot</button>
+          </div>
+          <div style="height:10px"></div>
+          <h3 style="margin-top:6px; margin-bottom:4px;">MOVE TO BREAK EVEN</h3>
+          <p class="muted">Move SL to entry price for open positions that are currently in profit.</p>
+          <div class="field"><label>Profit Position</label><select id="be-symbol"></select></div>
+          <div class="action-row">
+            <button id="btn-move-be" class="btn btn-save" type="button">Move To Break Even</button>
           </div>
           <div id="close-note" class="muted" style="margin-top:10px; line-height:1.6;">Use quick close actions above.</div>
         </div>
@@ -645,11 +653,77 @@
         const items = data.items || [];
         const options = items.map((s) => `<option value="${s}">${s}</option>`).join('');
         document.getElementById('f-symbol').innerHTML = options;
-        document.getElementById('close-symbol').innerHTML = `<option value="">Auto by first open</option>${options}`;
         if (data.default) {
           document.getElementById('f-symbol').value = data.default;
-          document.getElementById('close-symbol').value = data.default;
         }
+      }
+
+      function updateClosePositionOptions(positions) {
+        const closeSelect = document.getElementById('close-symbol');
+        const closeBtn = document.getElementById('btn-close-selected');
+        const previous = closeSelect.value;
+        const rows = (positions.items || []).filter((p) => Number(p.positionAmt || 0) !== 0);
+        if (!rows.length) {
+          closeSelect.innerHTML = '<option value="">No open positions</option>';
+          closeSelect.disabled = true;
+          closeBtn.disabled = true;
+          return;
+        }
+
+        const opts = rows.map((p) => {
+          const symbol = String(p.symbol || '').toUpperCase();
+          const amt = Number(p.positionAmt || 0);
+          const side = amt >= 0 ? 'LONG' : 'SHORT';
+          const qty = money(Math.abs(amt), 6);
+          const upnl = Number(p.unRealizedProfit || 0);
+          const upnlText = `${upnl >= 0 ? '+' : ''}${Number(upnl).toFixed(2)}`;
+          const value = `${symbol}|${side}|${symbol}_${side}`;
+          const label = `${symbol} | ${side} | ${qty} | uPnL ${upnlText}`;
+          return { value, label };
+        });
+        closeSelect.innerHTML = opts.map((o) => `<option value="${o.value}">${o.label}</option>`).join('');
+        closeSelect.disabled = false;
+        closeBtn.disabled = false;
+        const found = opts.find((o) => o.value === previous);
+        closeSelect.value = found ? found.value : opts[0].value;
+      }
+
+      function updateBreakEvenOptions(positions) {
+        const beSelect = document.getElementById('be-symbol');
+        const beBtn = document.getElementById('btn-move-be');
+        const previous = beSelect.value;
+        const rows = (positions.items || []).filter((p) => {
+          const amt = Number(p.positionAmt || 0);
+          if (amt === 0) return false;
+          const entry = Number(p.entryPrice || 0);
+          const mark = Number(p.markPrice || 0);
+          const upnl = Number(p.unRealizedProfit || 0);
+          const profitableByPrice = amt > 0 ? mark > entry : mark < entry;
+          return upnl > 0 || profitableByPrice;
+        });
+        if (!rows.length) {
+          beSelect.innerHTML = '<option value="">No profitable positions</option>';
+          beSelect.disabled = true;
+          beBtn.disabled = true;
+          return;
+        }
+        const opts = rows.map((p) => {
+          const symbol = String(p.symbol || '').toUpperCase();
+          const amt = Number(p.positionAmt || 0);
+          const side = amt >= 0 ? 'LONG' : 'SHORT';
+          const entry = Number(p.entryPrice || 0);
+          const mark = Number(p.markPrice || 0);
+          const upnl = Number(p.unRealizedProfit || 0);
+          const upnlText = `${upnl >= 0 ? '+' : ''}${Number(upnl).toFixed(2)}`;
+          const value = `${symbol}|${side}|${symbol}_${side}`;
+          const label = `${symbol} | ${side} | Entry ${money(entry)} | Mark ${money(mark)} | uPnL ${upnlText}`;
+          return { value, label };
+        });
+        beSelect.innerHTML = opts.map((o) => `<option value="${o.value}">${o.label}</option>`).join('');
+        beSelect.disabled = false;
+        beBtn.disabled = false;
+        const found = opts.find((o) => o.value === previous);
+        beSelect.value = found ? found.value : opts[0].value;
       }
 
       function buildOrderPayload(side) {
@@ -778,8 +852,15 @@
 
       async function closeSelectedSymbol() {
         const cfg = getSettings();
+        const selectedRaw = document.getElementById('close-symbol').value || '';
+        if (!selectedRaw) {
+          logResult({ success: false, message: 'No open position selected.' });
+          return;
+        }
+        const [symbol, positionSide] = selectedRaw.split('|');
         const payload = {
-          symbol: document.getElementById('close-symbol').value || document.getElementById('f-symbol').value,
+          symbol: symbol || document.getElementById('f-symbol').value,
+          position_side: positionSide || '',
           dry_run: cfg.dryrun,
         };
         const res = await fetchJson('/api/aster-trading/close-position', {
@@ -793,6 +874,26 @@
         const cfg = getSettings();
         const res = await fetchJson('/api/aster-trading/close-all-positions', {
           method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify({ dry_run: cfg.dryrun }),
+        });
+        logResult(res);
+        await refreshRealtime();
+      }
+
+      async function moveStopToBreakEven() {
+        const cfg = getSettings();
+        const selectedRaw = document.getElementById('be-symbol').value || '';
+        if (!selectedRaw) {
+          logResult({ success: false, message: 'No profitable position selected.' });
+          return;
+        }
+        const [symbol, positionSide] = selectedRaw.split('|');
+        const payload = {
+          symbol: symbol || document.getElementById('f-symbol').value,
+          position_side: positionSide || '',
+          dry_run: cfg.dryrun,
+        };
+        const res = await fetchJson('/api/aster-trading/move-stop-to-breakeven', {
+          method: 'POST', headers: { 'Content-Type': 'application/json' }, body: JSON.stringify(payload),
         });
         logResult(res);
         await refreshRealtime();
@@ -831,6 +932,8 @@
           fetchJson('/api/aster-trading/open-positions'),
           fetchJson('/api/aster-trading/open-orders'),
         ]);
+        updateClosePositionOptions(positions);
+        updateBreakEvenOptions(positions);
         document.getElementById('positions-box').innerHTML = tableHtml(
           ['Symbol', 'Side', 'Amt', 'Entry', 'Mark', 'uPnL', 'Lev'],
           (positions.items || []).map((p) => {
@@ -906,6 +1009,7 @@
       document.getElementById('btn-open-short').addEventListener('click', () => openShort().catch((e) => logResult(String(e))));
       document.getElementById('btn-close-selected').addEventListener('click', () => closeSelectedSymbol().catch((e) => logResult(String(e))));
       document.getElementById('btn-close-all').addEventListener('click', () => closeAllPositions().catch((e) => logResult(String(e))));
+      document.getElementById('btn-move-be').addEventListener('click', () => moveStopToBreakEven().catch((e) => logResult(String(e))));
       document.getElementById('btn-refresh-account').addEventListener('click', () => refreshAccount().catch((e) => logResult(String(e))));
       document.getElementById('btn-toggle-result-raw').addEventListener('click', () => {
         resultRawVisible = !resultRawVisible;

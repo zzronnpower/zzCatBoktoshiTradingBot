@@ -168,11 +168,14 @@ class AsterTradeClient:
         )
         return data if isinstance(data, list) else []
 
-    def get_income(self, symbol: str, limit: int = 100) -> List[Dict[str, Any]]:
+    def get_income(self, symbol: Optional[str] = None, limit: int = 100) -> List[Dict[str, Any]]:
+        params: Dict[str, Any] = {"limit": max(1, min(limit, 1000))}
+        if symbol:
+            params["symbol"] = symbol
         data = self._request(
             "GET",
             "/fapi/v3/income",
-            params={"symbol": symbol, "limit": max(1, min(limit, 1000))},
+            params=params,
             signed=True,
         )
         return data if isinstance(data, list) else []

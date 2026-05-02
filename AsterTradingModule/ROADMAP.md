@@ -130,6 +130,20 @@ Tach rieng phan ASTER futures trading khoi Boktoshi strategy flow va giu van han
   - hien `stopPrice` o cot gia trigger,
   - hien `Close-All` cho lenh `closePosition=true` thay vi qty=0,
   - bo sung SL/TP badge o cot Type.
+
+## Phase 18 - Close Target Precision
+
+- [x] Dropdown close position chi lay tu danh sach vi the dang mo realtime.
+- [x] Option close hien `PAIR + ID` de tranh nham khi co nhieu vi the gan giong nhau.
+- [x] Disable close-selected khi khong co vi the mo.
+- [x] Dieu chinh label option close sang `PAIR | SIDE | QTY | uPnL` de operator doc nhanh hon.
+
+## Phase 19 - Aster Trading History & PnL Curve
+
+- [x] Them tab/page `AsterTradingHistory` cho lich su giao dich dong.
+- [x] Them endpoint `/api/aster-trading/history` cho payload da chuan hoa.
+- [x] Nguon closed-trades uu tien income-based, loc `REALIZED_PNL` events.
+- [x] Them bieu do cumulative PnL curve tren trang history.
 - [x] Bo sung context `symbol + side` (va `orderId` neu co) trong submit status de de theo doi lenh nhanh.
 
 ## Ongoing Rule

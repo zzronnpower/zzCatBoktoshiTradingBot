@@ -1275,6 +1275,11 @@ def aster_simple_trading_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("aster_simple_trading.html", {"request": request})
 
 
+@app.get("/aster-trading-history", response_class=HTMLResponse)
+def aster_trading_history_page(request: Request) -> HTMLResponse:
+    return templates.TemplateResponse("aster_trading_history.html", {"request": request})
+
+
 @app.get("/eth-chart", response_class=HTMLResponse)
 def eth_chart_page(request: Request) -> HTMLResponse:
     return templates.TemplateResponse("eth_chart.html", {"request": request})
@@ -1937,6 +1942,14 @@ def aster_trading_close_all_positions(payload: Dict[str, Any] = Body(default={})
         raise HTTPException(status_code=400, detail=str(exc)) from exc
 
 
+@app.post("/api/aster-trading/move-stop-to-breakeven")
+def aster_trading_move_stop_to_breakeven(payload: Dict[str, Any] = Body(default={})):  # type: ignore[valid-type]
+    try:
+        return aster_trading.move_stop_to_breakeven(payload)
+    except Exception as exc:
+        raise HTTPException(status_code=400, detail=str(exc)) from exc
+
+
 @app.get("/api/aster-trading/open-positions")
 def aster_trading_open_positions(symbol: str = "") -> Dict[str, Any]:
     try:
@@ -1965,5 +1978,13 @@ def aster_trading_trade_history(limit: int = 100, symbol: str = "") -> Dict[str,
 def aster_trading_pnl_history(limit: int = 100, symbol: str = "") -> Dict[str, Any]:
     try:
         return aster_trading.get_income_history(limit=limit, symbol=symbol or None)
+    except Exception as exc:
+        raise HTTPException(status_code=502, detail=str(exc)) from exc
+
+
+@app.get("/api/aster-trading/history")
+def aster_trading_history(limit: int = 200, symbol: str = "") -> Dict[str, Any]:
+    try:
+        return aster_trading.get_closed_trades_history(limit=limit, symbol=symbol or None)
     except Exception as exc:
         raise HTTPException(status_code=502, detail=str(exc)) from exc

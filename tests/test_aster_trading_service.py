@@ -3,6 +3,9 @@ from AsterTradingModule.service import AsterManualTradingService
 
 
 class FakeClient:
+    def __init__(self):
+        self._open_orders = []
+
     def get_exchange_info(self):
         return {
             "symbols": [
@@ -44,13 +47,16 @@ class FakeClient:
         return items
 
     def get_open_orders(self, symbol=None):
-        return []
+        return list(self._open_orders)
 
     def set_leverage(self, symbol, leverage):
         return {"symbol": symbol, "leverage": leverage}
 
     def place_order(self, params):
         return {"ok": True, "params": params}
+
+    def cancel_order(self, symbol, order_id):
+        return {"ok": True, "symbol": symbol, "orderId": order_id}
 
     def get_user_trades(self, symbol, limit):
         return []
@@ -230,3 +236,28 @@ def test_normalize_symbol_accepts_dynamic_symbol_not_in_static_whitelist():
     service.client = DynamicClient()
     preview = service.preview_order({"symbol": "ADAUSDT", "order_type": "MARKET", "side": "BUY", "margin_usdt": 10, "leverage": 2})
     assert preview["symbol"] == "ADAUSDT"
+
+
+def test_move_stop_to_breakeven_dry_run_prepares_stop_order():
+    service = _service()
+    out = service.move_stop_to_breakeven({"symbol": "ETHUSDT", "position_side": "LONG", "dry_run": True})
+    assert out["success"] is True
+    assert out["dry_run"] is True
+    assert out["position_side"] == "LONG"
+    assert float(out["be_stop_price"]) == 1900.0
+    assert out["new_stop_order"]["type"] == "STOP_MARKET"
+
+
+def test_move_stop_to_breakeven_live_cancels_old_stop_and_places_new_stop():
+    service = _service()
+    service.client._open_orders = [
+        {"orderId": 11, "type": "STOP_MARKET", "side": "SELL", "closePosition": "true", "stopPrice": "1850"},
+        {"orderId": 12, "type": "TAKE_PROFIT_MARKET", "side": "SELL", "closePosition": "true", "stopPrice": "2200"},
+    ]
+    out = service.move_stop_to_breakeven({"symbol": "ETHUSDT", "position_side": "LONG", "dry_run": False})
+    assert out["success"] is True
+    assert out["dry_run"] is False
+    assert len(out["cancelled_stop_orders"]) == 1
+    assert out["cancelled_stop_orders"][0]["orderId"] == 11
+    assert out["new_stop_order"]["params"]["type"] == "STOP_MARKET"
+    assert float(out["be_stop_price"]) == 1900.0

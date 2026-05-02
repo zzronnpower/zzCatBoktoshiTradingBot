@@ -2156,6 +2156,55 @@ Màu sẽ tự cập nhật theo realtime polling 3 giây.</pre></div>
 - Với lệnh `closePosition=true`, cột Qty giờ hiển thị `Close-All` thay vì `0`.
 - Đổi tên cột thành `Trigger/Price` và `Qty/Mode` để đọc đúng ngữ nghĩa.
 - Cột Type có badge SL/TP để scan nhanh hơn.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>Close Position dropdown đang sai: phải chỉ cho chọn vị thế đang mở và hiển thị PAIR + ID thôi</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã chỉnh xong đúng theo yêu cầu:
+
+- Dropdown `Close Symbol` giờ chỉ lấy từ danh sách vị thế đang mở realtime.
+- Mỗi option hiển thị dạng `PAIR | ID ...`.
+- Nếu không có vị thế mở thì dropdown hiện `No open positions` và nút `Close Selected Symbol` tự disable.
+- Khi close, payload gửi đúng symbol + position_side của option đã chọn.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>Sửa lại format dropdown close thành: BTCUSDT | SHORT | 0.005 | uPnL -1.23 (không dùng ID)</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã đổi format dropdown close theo đúng yêu cầu:
+
+- `PAIR | SIDE | QTY | uPnL ...`
+- ví dụ: `BTCUSDT | SHORT | 0.005 | uPnL -1.23`.
+
+Không còn hiển thị ID trong nhãn dropdown nữa.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>Thêm tab AsterTradingHistory: closed trades theo income-based và có PnL Curve, theme giống SimpleAsterTrading</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Đã triển khai xong:
+
+- Thêm page mới `AsterTradingHistory`.
+- Thêm API `/api/aster-trading/history`.
+- Dữ liệu closed-trades lấy theo income-based và lọc `REALIZED_PNL`.
+- Thêm summary + bảng lịch sử + biểu đồ PnL Curve (cumulative realized).
+- Theme trang history đồng bộ phong cách tối của AsterSimpleTrading.
+- Đã gắn link tab mới vào AsterTrading và AsterSimpleTrading.</pre></div>
+
+            <div class="msg user"><span class="who">User</span><pre>Giờ tôi muốn phần CLOSE POSITION chia đôi ra, section dưới là Move To Break Even: dropdown chỉ hiện vị thế đang profit, bấm nút thì dời SL về entry để nếu dính stop thì hòa vốn.</pre></div>
+
+            <div class="msg assistant"><span class="who">Assistant</span><pre>Làm được và đã triển khai theo hướng an toàn:
+
+- Thêm section mới `MOVE TO BREAK EVEN` ngay dưới khối Close Position trong AsterSimpleTrading.
+- Dropdown `Profit Position` chỉ hiển thị các vị thế đang mở và đang profit.
+- Nút `Move To Break Even` gọi API mới `POST /api/aster-trading/move-stop-to-breakeven`.
+- Backend xử lý:
+  - xác nhận đúng position theo `symbol + position_side`,
+  - chỉ cho move BE khi position đang profit,
+  - hủy các lệnh SL `STOP_MARKET` close-position cũ của đúng side,
+  - đặt lại SL mới tại giá entry (round theo tick size),
+  - giữ nguyên TP hiện tại như yêu cầu.
+- Hỗ trợ cả `DRY_RUN` để kiểm tra trước khi chạy live.
+
+Trạng thái kiểm tra:
+- Logic close selected/close all vẫn giữ nguyên code path cũ.
+- Đã bổ sung test cho API + service + template liên quan BE.
+- Môi trường shell hiện tại chưa có pytest nên chưa chạy được test suite tại local shell này.</pre></div>
           </div>
         </div>
       </section>

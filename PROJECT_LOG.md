@@ -2321,3 +2321,75 @@ When a new assistant session starts:
   - `STOP_MARKET` and `TAKE_PROFIT_MARKET` now display `stopPrice` as trigger price.
   - close-position orders (`closePosition=true`) now display `Close-All` instead of `0` qty.
   - type column now includes compact SL/TP visual badge for faster scan.
+
+## 112) Close Position dropdown now binds to actual open positions (pair + ID) (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html` close-flow UX:
+  - `Close Symbol` dropdown no longer lists all tradable pairs.
+  - dropdown now builds from realtime `/api/aster-trading/open-positions` only.
+  - each option displays `PAIR | ID <positionId/updateTime>` to avoid ambiguity.
+- Close action payload now sends:
+  - `symbol`
+  - `position_side` (`LONG`/`SHORT`)
+  - `dry_run`
+- Added empty-state handling:
+  - when no open positions exist, dropdown shows `No open positions` and `Close Selected Symbol` button is disabled.
+- Result: operator can only select valid open targets and close the exact selected side context.
+
+## 113) Close dropdown label format switched to pair/side/qty/uPnL (2026-05-01)
+
+- Updated `app/templates/aster_simple_trading.html` close dropdown option format per operator request:
+  - from `PAIR | ID ...`
+  - to `PAIR | SIDE | QTY | uPnL ...`
+- Example: `BTCUSDT | SHORT | 0.005 | uPnL -1.23`.
+
+## 114) New AsterTradingHistory tab with closed-trade table and cumulative PnL curve (2026-05-01)
+
+- Added new page route in `app/main.py`:
+  - `GET /aster-trading-history`
+- Added new API endpoint in `app/main.py`:
+  - `GET /api/aster-trading/history?symbol=&limit=`
+- Implemented closed-trade history source (income-based) in `AsterTradingModule/service.py`:
+  - new method `get_closed_trades_history(...)`.
+  - uses ASTER income stream and filters to `incomeType == REALIZED_PNL` for closed PnL events.
+  - returns normalized rows + summary + cumulative realized PnL curve points.
+- Added new template `app/templates/aster_trading_history.html`:
+  - AsterSimpleTrading-like dark theme.
+  - filter toolbar (symbol, limit, refresh).
+  - summary cards (realized pnl, total, wins/losses, best/worst).
+  - closed-trades table.
+  - SVG cumulative PnL curve chart.
+- Added nav tab links to:
+  - `app/templates/aster_trading.html`
+  - `app/templates/aster_simple_trading.html`
+- Test updates:
+  - `tests/test_aster_trading_api.py` adds closed-history endpoint test.
+  - `tests/test_aster_trading_templates.py` adds template assertions for history page + curve container.
+- Validation:
+  - `python3 -m compileall app AsterTradingModule tests` passed.
+  - smoke check `GET /aster-trading-history` -> 200.
+  - smoke check `GET /api/aster-trading/history` returns normalized payload.
+
+## 115) AsterSimpleTrading Break-Even action with profit-only selector (2026-05-02)
+
+- Added new backend API in `app/main.py`:
+  - `POST /api/aster-trading/move-stop-to-breakeven`
+- Implemented break-even logic in `AsterTradingModule/service.py`:
+  - new method `move_stop_to_breakeven(payload)`.
+  - validates selected open position by `symbol` + `position_side`.
+  - allows action only when position is in profit (price-direction + uPnL guard).
+  - keeps existing TP order unchanged.
+  - cancels only existing SL `STOP_MARKET` close-position orders for that side.
+  - places new `STOP_MARKET` close-position at entry price (rounded by symbol tick size).
+  - supports `dry_run` preview path.
+- Updated `app/templates/aster_simple_trading.html` close card:
+  - added separate section `MOVE TO BREAK EVEN` under close actions.
+  - added `Profit Position` dropdown (`id="be-symbol"`) populated only from currently profitable open positions.
+  - added button `Move To Break Even` wired to new API.
+  - refresh cycle now updates both close dropdown and break-even dropdown from realtime positions.
+- Tests updated:
+  - `tests/test_aster_trading_api.py`: added endpoint passthrough test for break-even route.
+  - `tests/test_aster_trading_service.py`: added dry-run and live behavior tests for break-even move.
+  - `tests/test_aster_trading_templates.py`: added template assertions for break-even section.
+- Verification note:
+  - local environment currently does not have `pytest` installed (`python3 -m pytest` unavailable), so pytest suite could not be executed in this shell.

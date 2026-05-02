@@ -62,6 +62,11 @@ Status date: 2026-05-01
 - [x] Remove manual leverage input from Manual-SL UI mode and show computed leverage summary.
 - [x] Color-code open positions `uPnL` in AsterSimpleTrading (green profit / red loss).
 - [x] Fix open-orders table semantics for SL/TP closePosition orders (trigger price + qty mode rendering).
+- [x] Close dropdown now sourced from realtime open positions only, with pair+ID labels.
+- [x] Close dropdown label updated to `PAIR | SIDE | QTY | uPnL` format.
+- [x] Add new AsterTradingHistory tab/page for closed trades.
+- [x] Add `/api/aster-trading/history` endpoint (income-based closed trades).
+- [x] Add cumulative realized PnL curve visualization.
 
 ## Validation Checklist
 

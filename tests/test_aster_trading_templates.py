@@ -45,6 +45,9 @@ def test_aster_simple_trading_template_has_quick_close_buttons():
     assert "AsterSimpleTrading" in html
     assert "Close Selected Symbol" in html
     assert "Close All Positions" in html
+    assert "MOVE TO BREAK EVEN" in html
+    assert "Move To Break Even" in html
+    assert 'id="be-symbol"' in html
     assert "POSITION SETTINGS" in html
     assert "ACCOUNT OVERVIEW" in html
     assert "Recent snapshots (last 5)" in html
@@ -81,3 +84,12 @@ def test_theme_js_supports_aster_theme_option():
     js = _read_static("theme.js")
     assert '"aster"' in js
     assert 'option value="aster"' in js
+
+
+def test_aster_trading_history_template_has_curve_and_table():
+    html = _read_template("aster_trading_history.html")
+    assert "AsterTradingHistory" in html
+    assert "PnL Curve (Cumulative Realized)" in html
+    assert 'id="curve"' in html
+    assert 'id="table"' in html
+    assert '/api/aster-trading/history' in html
